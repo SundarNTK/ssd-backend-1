@@ -247,9 +247,14 @@ function resolveRow(raw, nakshathiramLookup) {
   if (!email) errors.push("Email is required.");
   else if (!EMAIL_RE.test(email)) errors.push("Email is not a valid email address.");
 
-  const mobileNumber = String(raw.mobileNumber ?? "").trim();
+  // Same rule as the Customer form: an 8-digit Singapore mobile starting with 8 or 9. Spaces, dashes
+  // and a leading +65 / 65 country code are tolerated and stripped, so the stored number is always the 8 digits.
+  let mobileNumber = String(raw.mobileNumber ?? "").trim();
   if (!mobileNumber) errors.push("Mobile Number is required.");
-  else if (mobileNumber.length < 6) errors.push("Mobile Number must be at least 6 characters.");
+  else {
+    mobileNumber = mobileNumber.replace(/[\s-]/g, "").replace(/^\+?65(?=\d{8}$)/, "");
+    if (!/^[89]\d{7}$/.test(mobileNumber)) errors.push("Mobile Number must be a valid 8-digit Singapore mobile number starting with 8 or 9.");
+  }
 
   const familyMembers = [];
   for (let slot = 1; slot <= FAMILY_MEMBER_SLOTS; slot++) {
@@ -465,7 +470,7 @@ async function downloadTemplate(req, res) {
     infoSheet.addRow(["Customer Import — Instructions"]).getCell(1).font = { bold: true, size: 14 };
     infoSheet.addRow([""]);
     infoSheet.addRow(["1. Fill one row per devotee on the first sheet, starting below the sample row."]);
-    infoSheet.addRow(["2. Full Name, Email, and Mobile Number are required for every row."]);
+    infoSheet.addRow(["2. Full Name, Email, and Mobile Number are required for every row. Mobile Number must be an 8-digit Singapore mobile starting with 8 or 9 (a +65 prefix is removed)."]);
     infoSheet.addRow([
       `3. Up to ${FAMILY_MEMBER_SLOTS} family members per devotee — fill a family member's three columns together (Name (English) and Natchathiram are both required once you start one), or leave all three blank to skip that slot.`,
     ]);
