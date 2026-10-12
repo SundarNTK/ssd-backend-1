@@ -10,7 +10,7 @@ const slotDetailEntry = Joi.object({
   date: Joi.date().required(),
   startTime: Joi.string().trim().min(1).max(10).required(),
   endTime: Joi.string().trim().min(1).max(10).required(),
-  totalSeats: Joi.number().integer().min(0).default(0),
+  totalSeats: Joi.number().integer().min(1).required(), // a slot needs at least 1 seat
   bookedSeats: Joi.number().integer().min(0).default(0), // ignored - the server owns the seat counters
   heldSeats: Joi.number().integer().min(0).default(0), // ignored - the server owns the seat counters
   status: Joi.number().valid(0, 1).default(1),

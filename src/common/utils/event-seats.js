@@ -23,8 +23,8 @@
  *   booking confirmed  -> confirmSeats   heldSeats  -= n, bookedSeats += n  (one update)
  *   hold times out     -> releaseSeats   heldSeats  -= n           (cleanup job)
  *
- * A slot with totalSeats 0 has no seat limit: nothing is ever refused, and
- * only confirmed seats are counted.
+ * A slot needs at least 1 seat. One saved with totalSeats 0 (older records) has no seats to
+ * give: it can never be held or booked until the Event master sets its seat count.
  */
 const mongoose = require("mongoose");
 const Event = require("../../models/events");
@@ -133,10 +133,7 @@ async function tryHoldSeats(eventId, slotKey, seats, { posOnly = false } = {}) {
                 ],
               },
               {
-                $or: [
-                  { $eq: ["$$s.totalSeats", 0] },
-                  { $lte: [{ $add: [bookedExpr("s"), heldExpr("s"), seats] }, "$$s.totalSeats"] },
-                ],
+                $lte: [{ $add: [bookedExpr("s"), heldExpr("s"), seats] }, "$$s.totalSeats"],
               },
             ],
           },
@@ -178,7 +175,7 @@ async function bookSeatsDirect(eventId, slotKey, seats) {
 
 /** Seats still free on a slot (Infinity when it has no seat limit). */
 function seatsLeftOf(slot) {
-  if (!slot || !slot.totalSeats) return Infinity;
+  if (!slot) return Infinity;
   return Math.max(0, slot.totalSeats - (slot.bookedSeats || 0) - (slot.heldSeats || 0));
 }
 
@@ -200,7 +197,7 @@ async function describeShortage(eventId, slotKey) {
 async function acquireHold({ eventId, slotKey, seats, ownerId = null, clientId = null, orderId = null, ttlMs = CART_HOLD_TTL_MS, posOnly = false }) {
   const event = await Event.findOne({ _id: eventId }).select("slotDetails");
   const slot = event?.slotDetails.find((s) => slotKeyOf(s) === slotKey);
-  if (slot && !slot.totalSeats) return null;
+  if (slot && !slot.totalSeats) throw "This slot has no seats available.";
 
   let taken = await tryHoldSeats(eventId, slotKey, seats, { posOnly });
   if (!taken) {

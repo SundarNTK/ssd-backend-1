@@ -45,7 +45,7 @@ function assertDatesValid({ dateType, eventDates, startDate, endDate, isSlotRequ
   }
 }
 
-const { slotKeyOf, keyExpr, bookedExpr, heldExpr, toObjectId } = require("../../common/utils/event-seats");
+const { slotKeyOf, keyExpr, bookedExpr, heldExpr, toObjectId, slotHasStarted } = require("../../common/utils/event-seats");
 const { buildUserSnapshot } = require("../../common/utils/entity-snapshot");
 
 const dayOf = (slot) => new Date(slot.date).toISOString().slice(0, 10);
@@ -112,6 +112,21 @@ function assertSlotChangesAllowed(existingSlots, incomingSlots) {
   }
 }
 
+/**
+ * Slot times: the end must be later than the start, and a slot that is new (or moved to another
+ * date / start time) must still be in the future - today later on, or a later day. A slot left at
+ * its saved date and start time is not re-checked, so an event can still be edited after the
+ * date of an old slot has gone by.
+ */
+function assertSlotTimes(existingSlots, incomingSlots) {
+  for (const slot of incomingSlots || []) {
+    const label = `Slot "${slot.slotName}"`;
+    if (String(slot.endTime) <= String(slot.startTime)) throw `${label}: the end time must be later than the start time.`;
+    const unchanged = existingSlots.some((e) => dayOf(e) === dayOf(slot) && e.startTime === slot.startTime);
+    if (!unchanged && slotHasStarted(slot)) throw `${label}: choose today (a start time still to come) or a future date.`;
+  }
+}
+
 /** A slot field read from the CURRENT document inside a MongoDB expression (0 when the slot is gone). */
 function slotFieldExpr(key, field) {
   return {
@@ -136,6 +151,7 @@ const totalHeldExpr = { $sum: { $map: { input: "$slotDetails", as: "s", in: held
 async function create(req, res) {
   try {
     assertDatesValid(req.body);
+    assertSlotTimes([], req.body.slotDetails);
     req.body.slotDetails = withZeroCounters(req.body.slotDetails);
     const doc = await Event.create({ ...req.body, createdBy: req.auth?.userId || null });
     const populated = await doc.populate(POPULATE);
@@ -190,7 +206,10 @@ async function update(req, res) {
       }
 
       const incomingSlots = req.body.slotDetails;
-      if (incomingSlots) assertSlotChangesAllowed(existingSlots, incomingSlots);
+      if (incomingSlots) {
+        assertSlotChangesAllowed(existingSlots, incomingSlots);
+        assertSlotTimes(existingSlots, incomingSlots);
+      }
 
       // Validate the whole proposed document the normal Mongoose way...
       const { slotDetails: _ignored, ...scalarBody } = req.body;
