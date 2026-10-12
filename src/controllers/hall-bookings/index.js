@@ -1,4 +1,5 @@
 const express = require("express");
+const { to12Hour } = require("../../common/utils/format-time");
 const requirePermission = require("../../common/middleware/require-permission");
 const mongoose = require("mongoose");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
@@ -61,7 +62,7 @@ function derivePaymentStatus(amountPaid, finalAmount) {
 /** exceptionHandler only ever renders a plain message string — fold the conflict detail into it rather than a separate structured field. */
 function describeConflicts(conflicts) {
   if (!conflicts?.length) return "";
-  const parts = conflicts.map((c) => `${c.hallOrPackage || "Hall"} is booked ${c.startTime}–${c.endTime} (${c.bookingNumber})`);
+  const parts = conflicts.map((c) => `${c.hallOrPackage || "Hall"} is booked ${to12Hour(c.startTime)}–${to12Hour(c.endTime)} (${c.bookingNumber})`);
   return ` Conflict: ${parts.join("; ")}.`;
 }
 

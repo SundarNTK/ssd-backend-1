@@ -47,6 +47,7 @@ function assertDatesValid({ dateType, eventDates, startDate, endDate, isSlotRequ
 
 const { slotKeyOf, keyExpr, bookedExpr, heldExpr, toObjectId, slotHasStarted } = require("../../common/utils/event-seats");
 const { buildUserSnapshot } = require("../../common/utils/entity-snapshot");
+const { to12Hour } = require("../../common/utils/format-time");
 
 const dayOf = (slot) => new Date(slot.date).toISOString().slice(0, 10);
 
@@ -73,7 +74,7 @@ function withZeroCounters(slotDetails) {
  *    orphaned.
  *  - Any slot's seat limit must stay at or above booked + held seats.
  *
- * 0 total seats means "no seat limit", which counts as the highest limit.
+ * A slot needs at least 1 seat. Older slots saved with 0 can be given a real seat count at any time.
  */
 function assertSlotChangesAllowed(existingSlots, incomingSlots) {
   const incomingByKey = new Map(incomingSlots.map((s) => [slotKeyOf(s), s]));
@@ -82,20 +83,17 @@ function assertSlotChangesAllowed(existingSlots, incomingSlots) {
     const booked = slot.bookedSeats || 0;
     const held = slot.heldSeats || 0;
     const incoming = incomingByKey.get(slotKeyOf(slot));
-    const label = `"${slot.slotName}" on ${dayOf(slot)} at ${slot.startTime}`;
+    const label = `"${slot.slotName}" on ${dayOf(slot)} at ${to12Hour(slot.startTime)}`;
 
     if (booked > 0) {
       if (!incoming || incoming.endTime !== slot.endTime) {
         throw `Slot ${label} already has ${booked} booked seat(s) - its name, date and time cannot be changed and it cannot be removed. You can only increase its seats.`;
       }
       if (incoming.status !== 1) throw `Slot ${label} has bookings, so it cannot be made inactive.`;
-      const wasLimited = slot.totalSeats > 0;
-      if (wasLimited && incoming.totalSeats !== 0 && incoming.totalSeats < slot.totalSeats) {
+      // Seats can only go up. A slot saved with 0 seats (the old "no limit" setting) has nothing to
+      // go below, so any seat count that covers what is already booked or held is accepted for it.
+      if (incoming.totalSeats < slot.totalSeats) {
         throw `Slot ${label} has bookings, so its seats can only be increased (currently ${slot.totalSeats}).`;
-      }
-      if (wasLimited && incoming.totalSeats === 0) continue; // opening it up to no limit is an increase
-      if (!wasLimited && incoming.totalSeats !== 0) {
-        throw `Slot ${label} has bookings and no seat limit, so a limit cannot be added.`;
       }
     } else if (held > 0 && (!incoming || incoming.endTime !== slot.endTime || incoming.status !== 1)) {
       throw `Slot ${label} has ${held} seat(s) held by open carts. Try again in a few minutes.`;
@@ -104,7 +102,7 @@ function assertSlotChangesAllowed(existingSlots, incomingSlots) {
 
   for (const incoming of incomingSlots) {
     const existing = existingSlots.find((s) => slotKeyOf(s) === slotKeyOf(incoming));
-    if (!existing || incoming.totalSeats === 0) continue;
+    if (!existing) continue;
     const used = (existing.bookedSeats || 0) + (existing.heldSeats || 0);
     if (incoming.totalSeats < used) {
       throw `Slot "${incoming.slotName}" has ${used} seat(s) booked or held, so its seats cannot be set below that.`;
