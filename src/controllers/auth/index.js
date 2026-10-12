@@ -209,42 +209,48 @@ async function forgotPassword(req, res) {
     const { identifier } = req.body;
     const user = await findActiveUserByEmailOrMobile(identifier);
 
-    // Deliberately generic and always-success — unlike a literal port of
-    // HEB's controller (which throws "User not found"), this never confirms
-    // or denies whether an account exists for a given email/mobile.
-    if (user && user.isAccountUsable()) {
-      const rawToken = generateRawToken();
-      user.passwordResetTokenHash = hashToken(rawToken);
-      user.passwordResetTokenExpiresAt = addMinutes(new Date(), env.RESET_TOKEN_TTL_MINUTES);
-      await user.save();
-
-      // Shared by staff and devotee accounts alike — route each to their own
-      // portal's reset screen so a customer never lands on the staff admin login.
-      const isCustomer = user.userType === USER_TYPES.CUSTOMER;
-      const resetPathPrefix = isCustomer ? "/customer" : "/admin";
-      const portalOrigin = isCustomer ? env.CUSTOMER_APP_URL : env.ADMIN_APP_URL;
-      const resetUrl = `${portalOrigin}${resetPathPrefix}/reset-password/${rawToken}`;
-      const defaultAssignment = user.getDefaultEntityAssignment();
-      try {
-        await sendTemplatedEmail("PASSWORD_RESET", defaultAssignment?.entity, user.email, {
-          name: user.name,
-          resetUrl,
-          expiresInMinutes: env.RESET_TOKEN_TTL_MINUTES,
-        });
-      } catch (mailError) {
-        // A readable delivery error (e.g. "address not verified") would reveal that the account exists,
-        // so it is logged here and the caller still gets the same generic reply as for unknown accounts.
-        if (!mailError?.expose) throw mailError;
-        console.error(">>> forgotPassword: reset email not delivered:", mailError.message);
-      }
+    if (!user) {
+      return exceptionHandler({
+        res,
+        error: "No account is registered with this email or mobile number.",
+        statusCode: 404,
+      });
     }
+    if (user.status !== 1) {
+      throw "This account has been deactivated. Please contact your temple administrator.";
+    }
+    if (user.accessUpto && user.accessUpto.getTime() < Date.now()) {
+      throw "Your access to this account has expired. Please contact your temple administrator.";
+    }
+
+    const rawToken = generateRawToken();
+    user.passwordResetTokenHash = hashToken(rawToken);
+    user.passwordResetTokenExpiresAt = addMinutes(new Date(), env.RESET_TOKEN_TTL_MINUTES);
+    await user.save();
+
+    // Shared by staff and devotee accounts alike — route each to their own
+    // portal's reset screen so a customer never lands on the staff admin login.
+    const isCustomer = user.userType === USER_TYPES.CUSTOMER;
+    const resetPathPrefix = isCustomer ? "/customer" : "/admin";
+    const portalOrigin = isCustomer ? env.CUSTOMER_APP_URL : env.ADMIN_APP_URL;
+    const resetUrl = `${portalOrigin}${resetPathPrefix}/reset-password/${rawToken}`;
+    const defaultAssignment = user.getDefaultEntityAssignment();
+    await sendTemplatedEmail("PASSWORD_RESET", defaultAssignment?.entity, user.email, {
+      name: user.name,
+      resetUrl,
+      expiresInMinutes: env.RESET_TOKEN_TTL_MINUTES,
+    });
 
     return responseHandler({
       res,
-      successMessage: "If that account exists, a reset link has been sent to the registered email.",
+      successMessage: "A reset link has been sent to the registered email.",
     });
   } catch (error) {
-    return exceptionHandler({ res, error });
+    return exceptionHandler({
+      res,
+      error,
+      statusCode: typeof error === "string" ? 403 : undefined,
+    });
   }
 }
 
