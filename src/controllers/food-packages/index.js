@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadFoodPackageImage, hydrateMultipartBody } = require("../../common/middleware/upload");
 const makeCrudController = require("../../common/factories/crud-controller");
@@ -18,10 +19,10 @@ const crud = makeCrudController(FoodPackage, {
   populate: ["menuItems.menuItem"],
 });
 
-router.get("/food-packages", crud.list);
-router.post("/food-packages", uploadFoodPackageImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
-router.put("/food-packages/:id", uploadFoodPackageImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
-router.delete("/food-packages/:id", crud.remove);
+router.get("/food-packages", requirePermission.any(["food-packages", "hall-bookings", "hall-availability"], "view"), crud.list);
+router.post("/food-packages", requirePermission("food-packages", "fullAccess"), uploadFoodPackageImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
+router.put("/food-packages/:id", requirePermission("food-packages", "edit"), uploadFoodPackageImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
+router.delete("/food-packages/:id", requirePermission("food-packages", "fullAccess"), crud.remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(FoodPackage, {
@@ -35,9 +36,9 @@ const importExport = makeImportExportController(FoodPackage, {
   extraDefaults: { status: 1, image: null },
 });
 
-router.get("/food-packages/export", importExport.exportList);
-router.get("/food-packages/import/template", importExport.downloadTemplate);
-router.post("/food-packages/import/validate", importExport.validateImport);
-router.post("/food-packages/import/commit", importExport.commitImport);
+router.get("/food-packages/export", requirePermission("food-packages", "view"), importExport.exportList);
+router.get("/food-packages/import/template", requirePermission("food-packages", "view"), importExport.downloadTemplate);
+router.post("/food-packages/import/validate", requirePermission("food-packages", "fullAccess"), importExport.validateImport);
+router.post("/food-packages/import/commit", requirePermission("food-packages", "fullAccess"), importExport.commitImport);
 
 module.exports = router;

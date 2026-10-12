@@ -32,4 +32,22 @@ function requirePermission(module, level = "view") {
   return guard;
 }
 
+/**
+ * Same check, passing when ANY of the listed modules grants the level - for lookups that more
+ * than one screen reads (e.g. the halls list feeds both the Hall master and the Hall Booking form).
+ */
+requirePermission.any = function requireAnyPermission(modules, level = "view") {
+  const guard = (req, res, next) => {
+    if (req.auth?.userType === USER_TYPES.SUPER_ADMIN) return next();
+    if (modules.some((m) => req.auth?.permissions?.[m]?.[level])) return next();
+    return exceptionHandler({
+      res,
+      error: `You don't have ${level} access to ${modules.join(" / ")}.`,
+      statusCode: 403,
+    });
+  };
+  Object.defineProperty(guard, "name", { value: `requirePermission.any:${modules.join("|")}:${level}` });
+  return guard;
+};
+
 module.exports = requirePermission;

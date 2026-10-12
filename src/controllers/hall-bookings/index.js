@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const mongoose = require("mongoose");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
 const escapeRegex = require("../../common/utils/escape-regex");
@@ -466,12 +467,12 @@ async function createHallBooking(req, res) {
   }
 }
 
-router.get("/hall-bookings/customers/search", searchCustomers);
-router.post("/hall-bookings/customers", createWalkInCustomer);
-router.get("/hall-bookings", listHallBookings);
-router.get("/hall-bookings/:id", getHallBooking);
-router.post("/hall-bookings/preview", previewBooking);
-router.post("/hall-bookings", createHallBooking);
+router.get("/hall-bookings/customers/search", requirePermission("hall-bookings", "view"), searchCustomers);
+router.post("/hall-bookings/customers", requirePermission("hall-bookings", "fullAccess"), createWalkInCustomer);
+router.get("/hall-bookings", requirePermission("hall-bookings", "view"), listHallBookings);
+router.get("/hall-bookings/:id", requirePermission("hall-bookings", "view"), getHallBooking);
+router.post("/hall-bookings/preview", requirePermission("hall-bookings", "view"), previewBooking);
+router.post("/hall-bookings", requirePermission("hall-bookings", "fullAccess"), createHallBooking);
 
 module.exports = router;
 module.exports.computeBookingAmounts = computeBookingAmounts;

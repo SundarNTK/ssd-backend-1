@@ -85,6 +85,15 @@ const AVAILABLE_MODULES = [
   { key: "pos-transactions", label: "POS Transactions", group: "Transactions" },
   { key: "customer-transactions", label: "Customer Transactions", group: "Transactions" },
   { key: "pos-order-confirmation", label: "POS Order Confirmation", group: "Transactions" },
+  { key: "hall-categories", label: "Hall Category", group: "Hall & Meal Management" },
+  { key: "halls", label: "Hall", group: "Hall & Meal Management" },
+  { key: "hall-purposes", label: "Hall Purpose", group: "Hall & Meal Management" },
+  { key: "additional-services", label: "Additional Service", group: "Hall & Meal Management" },
+  { key: "hall-packages", label: "Hall Package", group: "Hall & Meal Management" },
+  { key: "food-menu-items", label: "Food Menu Item", group: "Hall & Meal Management" },
+  { key: "food-packages", label: "Food Package", group: "Hall & Meal Management" },
+  { key: "hall-availability", label: "Hall Availability", group: "Hall & Meal Management" },
+  { key: "hall-bookings", label: "Hall Booking", group: "Hall & Meal Management" },
   { key: "reports", label: "Custom Reports", group: "Reports" },
 ];
 

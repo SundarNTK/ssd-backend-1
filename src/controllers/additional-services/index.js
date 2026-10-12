@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadAdditionalServiceImage, hydrateMultipartBody } = require("../../common/middleware/upload");
 const makeCrudController = require("../../common/factories/crud-controller");
@@ -17,10 +18,10 @@ const crud = makeCrudController(AdditionalService, {
   referencedBy: [{ model: HallPackage, field: "additionalServices", label: "Hall Package" }],
 });
 
-router.get("/additional-services", crud.list);
-router.post("/additional-services", uploadAdditionalServiceImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
-router.put("/additional-services/:id", uploadAdditionalServiceImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
-router.delete("/additional-services/:id", crud.remove);
+router.get("/additional-services", requirePermission.any(["additional-services", "hall-bookings", "hall-availability"], "view"), crud.list);
+router.post("/additional-services", requirePermission("additional-services", "fullAccess"), uploadAdditionalServiceImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
+router.put("/additional-services/:id", requirePermission("additional-services", "edit"), uploadAdditionalServiceImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
+router.delete("/additional-services/:id", requirePermission("additional-services", "fullAccess"), crud.remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(AdditionalService, {
@@ -31,9 +32,9 @@ const importExport = makeImportExportController(AdditionalService, {
   extraDefaults: { status: 1, image: null },
 });
 
-router.get("/additional-services/export", importExport.exportList);
-router.get("/additional-services/import/template", importExport.downloadTemplate);
-router.post("/additional-services/import/validate", importExport.validateImport);
-router.post("/additional-services/import/commit", importExport.commitImport);
+router.get("/additional-services/export", requirePermission("additional-services", "view"), importExport.exportList);
+router.get("/additional-services/import/template", requirePermission("additional-services", "view"), importExport.downloadTemplate);
+router.post("/additional-services/import/validate", requirePermission("additional-services", "fullAccess"), importExport.validateImport);
+router.post("/additional-services/import/commit", requirePermission("additional-services", "fullAccess"), importExport.commitImport);
 
 module.exports = router;

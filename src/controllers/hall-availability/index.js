@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
 const { checkHallAvailability } = require("../../common/utils/hall-availability");
 
@@ -63,6 +64,6 @@ async function checkAvailability(req, res) {
   }
 }
 
-router.post("/availability/check", checkAvailability);
+router.post("/availability/check", requirePermission.any(["hall-bookings", "hall-availability"], "view"), checkAvailability);
 
 module.exports = router;

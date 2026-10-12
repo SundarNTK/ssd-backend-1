@@ -1,7 +1,6 @@
 const express = require("express");
 const authGuard = require("../common/middleware/auth-guard");
 const adminOnly = require("../common/middleware/admin-only");
-const hallMealAccessOnly = require("../common/middleware/hall-meal-access-only");
 const authRoutes = require("../controllers/auth");
 const emailTemplateRoutes = require("../controllers/email-templates");
 const emailTemplateMappingRoutes = require("../controllers/email-template-mappings");
@@ -133,14 +132,11 @@ router.use("/masters", mastersRouter);
  * Hall & Meal Management masters — deliberately its own router group, not
  * folded into `mastersRouter` above, because it needs a different guard.
  * `mastersRouter`'s masters are delegable: a Role can be granted view/edit/
- * fullAccess on each via `requirePermission`. These seven are gated
- * instead on the `hallMealAccess` flag on the account itself
- * (`hallMealAccessOnly`) — not even every Super Admin passes this, only
- * whichever account(s) have that flag set. See
- * common/middleware/hall-meal-access-only.js for the reasoning.
+ * fullAccess on each via `requirePermission`. These seven carry no
+ * per-module permission: every signed-in Admin Panel user can use them.
  */
 const hallMealRouter = express.Router();
-hallMealRouter.use(authGuard, hallMealAccessOnly);
+hallMealRouter.use(authGuard, adminOnly);
 hallMealRouter.use(hallCategoryRoutes);
 hallMealRouter.use(hallRoutes);
 hallMealRouter.use(hallPurposeRoutes);

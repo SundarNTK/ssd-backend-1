@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadFoodMenuItemImage, hydrateMultipartBody } = require("../../common/middleware/upload");
 const makeCrudController = require("../../common/factories/crud-controller");
@@ -17,10 +18,10 @@ const crud = makeCrudController(FoodMenuItem, {
   referencedBy: [{ model: FoodPackage, field: "menuItems.menuItem", label: "Food Package" }],
 });
 
-router.get("/food-menu-items", crud.list);
-router.post("/food-menu-items", uploadFoodMenuItemImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
-router.put("/food-menu-items/:id", uploadFoodMenuItemImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
-router.delete("/food-menu-items/:id", crud.remove);
+router.get("/food-menu-items", requirePermission.any(["food-menu-items", "hall-bookings", "hall-availability"], "view"), crud.list);
+router.post("/food-menu-items", requirePermission("food-menu-items", "fullAccess"), uploadFoodMenuItemImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
+router.put("/food-menu-items/:id", requirePermission("food-menu-items", "edit"), uploadFoodMenuItemImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
+router.delete("/food-menu-items/:id", requirePermission("food-menu-items", "fullAccess"), crud.remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(FoodMenuItem, {
@@ -31,9 +32,9 @@ const importExport = makeImportExportController(FoodMenuItem, {
   extraDefaults: { status: 1, image: null },
 });
 
-router.get("/food-menu-items/export", importExport.exportList);
-router.get("/food-menu-items/import/template", importExport.downloadTemplate);
-router.post("/food-menu-items/import/validate", importExport.validateImport);
-router.post("/food-menu-items/import/commit", importExport.commitImport);
+router.get("/food-menu-items/export", requirePermission("food-menu-items", "view"), importExport.exportList);
+router.get("/food-menu-items/import/template", requirePermission("food-menu-items", "view"), importExport.downloadTemplate);
+router.post("/food-menu-items/import/validate", requirePermission("food-menu-items", "fullAccess"), importExport.validateImport);
+router.post("/food-menu-items/import/commit", requirePermission("food-menu-items", "fullAccess"), importExport.commitImport);
 
 module.exports = router;

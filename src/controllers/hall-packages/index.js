@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadHallPackageImage, hydrateMultipartBody } = require("../../common/middleware/upload");
 const makeCrudController = require("../../common/factories/crud-controller");
@@ -18,10 +19,10 @@ const crud = makeCrudController(HallPackage, {
   populate: ["hallPurpose", "halls", "additionalServices"],
 });
 
-router.get("/hall-packages", crud.list);
-router.post("/hall-packages", uploadHallPackageImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
-router.put("/hall-packages/:id", uploadHallPackageImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
-router.delete("/hall-packages/:id", crud.remove);
+router.get("/hall-packages", requirePermission.any(["hall-packages", "hall-bookings", "hall-availability"], "view"), crud.list);
+router.post("/hall-packages", requirePermission("hall-packages", "fullAccess"), uploadHallPackageImage, hydrateMultipartBody, validateBody(createSchema), crud.create);
+router.put("/hall-packages/:id", requirePermission("hall-packages", "edit"), uploadHallPackageImage, hydrateMultipartBody, validateBody(updateSchema), crud.update);
+router.delete("/hall-packages/:id", requirePermission("hall-packages", "fullAccess"), crud.remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(HallPackage, {
@@ -35,9 +36,9 @@ const importExport = makeImportExportController(HallPackage, {
   extraDefaults: { status: 1, image: null, termsAndConditions: "" },
 });
 
-router.get("/hall-packages/export", importExport.exportList);
-router.get("/hall-packages/import/template", importExport.downloadTemplate);
-router.post("/hall-packages/import/validate", importExport.validateImport);
-router.post("/hall-packages/import/commit", importExport.commitImport);
+router.get("/hall-packages/export", requirePermission("hall-packages", "view"), importExport.exportList);
+router.get("/hall-packages/import/template", requirePermission("hall-packages", "view"), importExport.downloadTemplate);
+router.post("/hall-packages/import/validate", requirePermission("hall-packages", "fullAccess"), importExport.validateImport);
+router.post("/hall-packages/import/commit", requirePermission("hall-packages", "fullAccess"), importExport.commitImport);
 
 module.exports = router;

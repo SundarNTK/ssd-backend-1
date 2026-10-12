@@ -1,4 +1,5 @@
 const express = require("express");
+const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadHallMedia, hydrateMultipartBody } = require("../../common/middleware/upload");
 const makeCrudController = require("../../common/factories/crud-controller");
@@ -18,13 +19,13 @@ const crud = makeCrudController(Hall, {
   referencedBy: [{ model: HallPackage, field: "halls", label: "Hall Package" }],
 });
 
-router.get("/halls", crud.list);
+router.get("/halls", requirePermission.any(["halls", "hall-bookings", "hall-availability"], "view"), crud.list);
 // uploadHallMedia runs before validateBody — multer has to parse the
 // multipart body (and stream both files to Cloudinary) before Joi
 // validates the resulting req.body, same ordering categories/index.js uses.
-router.post("/halls", uploadHallMedia, hydrateMultipartBody, validateBody(createSchema), crud.create);
-router.put("/halls/:id", uploadHallMedia, hydrateMultipartBody, validateBody(updateSchema), crud.update);
-router.delete("/halls/:id", crud.remove);
+router.post("/halls", requirePermission("halls", "fullAccess"), uploadHallMedia, hydrateMultipartBody, validateBody(createSchema), crud.create);
+router.put("/halls/:id", requirePermission("halls", "edit"), uploadHallMedia, hydrateMultipartBody, validateBody(updateSchema), crud.update);
+router.delete("/halls/:id", requirePermission("halls", "fullAccess"), crud.remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(Hall, {
@@ -36,9 +37,9 @@ const importExport = makeImportExportController(Hall, {
   extraDefaults: { status: 1, hallImages: [], floorPlan: null },
 });
 
-router.get("/halls/export", importExport.exportList);
-router.get("/halls/import/template", importExport.downloadTemplate);
-router.post("/halls/import/validate", importExport.validateImport);
-router.post("/halls/import/commit", importExport.commitImport);
+router.get("/halls/export", requirePermission("halls", "view"), importExport.exportList);
+router.get("/halls/import/template", requirePermission("halls", "view"), importExport.downloadTemplate);
+router.post("/halls/import/validate", requirePermission("halls", "fullAccess"), importExport.validateImport);
+router.post("/halls/import/commit", requirePermission("halls", "fullAccess"), importExport.commitImport);
 
 module.exports = router;
