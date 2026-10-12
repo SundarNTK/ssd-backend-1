@@ -41,7 +41,8 @@ function seatsFor(event, devotees) {
  */
 async function resolveEventLine(line, { portal }) {
   const filter = Event.notDeletedFilter({ _id: line.refId, status: 1, endDate: { $gte: todayStart() } });
-  if (portal !== "admin") filter.posVisibility = true;
+  if (portal === "admin") filter.adminBookingVisibility = { $ne: false };
+  else filter.posVisibility = true;
 
   const event = await Event.findOne(filter).select(
     "name code salePrice gstClassification generalLedger deityMapping isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers"

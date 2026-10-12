@@ -66,6 +66,8 @@ const eventSchema = new mongoose.Schema({
 
   posVisibility: { type: Boolean, default: true },
   publicVisibility: { type: Boolean, default: true },
+  // Shown on the Admin Panel's Booking screen. POS reads posVisibility, the Customer Portal publicVisibility.
+  adminBookingVisibility: { type: Boolean, default: true },
 });
 
 eventSchema.plugin(auditablePlugin);

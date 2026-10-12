@@ -26,6 +26,7 @@ const fields = [
   { key: "displayOrder", header: "Display Order", type: "number", integer: true, min: 0, default: 1, helpText: "Lower numbers appear first. Leave blank for 1." },
   { key: "posVisibility", header: "POS Visibility", type: "boolean", default: true, helpText: "Yes/No — visible at the POS counter. Defaults to Yes." },
   { key: "publicVisibility", header: "Public Visibility", type: "boolean", default: true, helpText: "Yes/No — visible on the customer portal. Defaults to Yes." },
+  { key: "adminBookingVisibility", header: "Admin Booking Visibility", type: "boolean", default: true, helpText: "Yes/No — visible on the Admin Panel booking screen. Defaults to Yes." },
 ];
 
 /** Matches controllers/events/index.js's own assertDatesValid business rule — mongoose schema validation alone won't catch this. */
@@ -51,6 +52,7 @@ function exportRow(doc) {
     displayOrder: doc.displayOrder,
     posVisibility: doc.posVisibility ? "Yes" : "No",
     publicVisibility: doc.publicVisibility ? "Yes" : "No",
+    adminBookingVisibility: doc.adminBookingVisibility === false ? "No" : "Yes",
   };
 }
 
@@ -84,6 +86,7 @@ function sampleRows(refLookups) {
       displayOrder: 1,
       posVisibility: "Yes",
       publicVisibility: "Yes",
+      adminBookingVisibility: "Yes",
     },
   ];
 }

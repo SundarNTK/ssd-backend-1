@@ -19,6 +19,8 @@ const paymentModeSchema = new mongoose.Schema({
   // built checkout yet (app/customer/page.tsx is still a placeholder).
   posAvailability: { type: Boolean, default: true },
   publicAvailability: { type: Boolean, default: true },
+  // Offered on the Admin Panel's Booking screen (records saved before this flag count as visible).
+  adminBookingVisibility: { type: Boolean, default: true },
 });
 
 paymentModeSchema.plugin(auditablePlugin);

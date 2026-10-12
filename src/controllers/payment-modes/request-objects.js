@@ -6,6 +6,7 @@ const updateSchema = Joi.object({
   name: Joi.string().trim().min(1).max(100),
   description: Joi.string().allow(""),
   posAvailability: Joi.boolean(),
+  adminBookingVisibility: Joi.boolean(),
   publicAvailability: Joi.boolean(),
   status: Joi.number().valid(0, 1),
 });

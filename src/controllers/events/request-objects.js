@@ -47,6 +47,7 @@ const createSchema = Joi.object({
 
   posVisibility: Joi.boolean().default(true),
   publicVisibility: Joi.boolean().default(true),
+  adminBookingVisibility: Joi.boolean().default(true),
 
   status: Joi.number().valid(0, 1).default(1),
 });
@@ -82,6 +83,7 @@ const updateSchema = Joi.object({
 
   posVisibility: Joi.boolean(),
   publicVisibility: Joi.boolean(),
+  adminBookingVisibility: Joi.boolean(),
 
   status: Joi.number().valid(0, 1),
 });

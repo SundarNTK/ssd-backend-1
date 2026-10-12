@@ -79,6 +79,9 @@ const posBookingSchema = new mongoose.Schema({
 
   bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   entity: { type: mongoose.Schema.Types.ObjectId, default: null },
+  // Which screen took the booking: the POS counter, or the Admin Panel's Booking page (same
+  // order / payment flow, so same collections). Records from before this field are POS.
+  portal: { type: String, enum: ["pos", "admin"], default: "pos" },
   bookedAt: { type: Date, required: true },
 
   // Denormalized snapshots — see common/utils/entity-snapshot.

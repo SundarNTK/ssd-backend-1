@@ -64,7 +64,7 @@ const {
   cancelReservations,
 } = require("../pos/inventory-reservation");
 const { effectiveQuantity } = require("../../common/utils/effective-quantity");
-const { loadPosVisibleHierarchy, offeringInPosHierarchy } = require("../../common/utils/pos-catalogue-visibility");
+const { loadHierarchyForPortal, offeringInPosHierarchy } = require("../../common/utils/pos-catalogue-visibility");
 
 const {
   createOrderSchema,
@@ -146,9 +146,9 @@ async function resolveOutstandingBalance(order) {
  * Same shape as controllers/pos/index.js's createOrder — see that file's
  * own comment for the full step-by-step rationale (server-side pricing,
  * atomic reservation placement with rollback, server-decided confirmation).
- * The one behavioural difference: this always stamps portal "pos" (this
- * module is POS-only, there's no admin/customer branch to disambiguate),
- * and mints a `referenceId` every order carries from creation, whether or
+ * Serves both the POS counter and the Admin Panel's Booking page: the route
+ * tree it arrived on (req.posPortal) decides which visibility flags apply and
+ * which portal the order is stamped with. Also mints a `referenceId` every order carries from creation, whether or
  * not it ends up needed (Cash never sees it again; PayNow/NETS pass it to
  * the gateway/terminal).
  */
@@ -158,7 +158,10 @@ async function createOrder(req, res) {
     if (error) throw error.details[0].message;
 
     const { customerId, lines, paymentModeId, paidAmount } = value;
-    const hierarchy = await loadPosVisibleHierarchy();
+    const portal = req.posPortal === "admin" ? "admin" : "pos";
+    const itemVisField = portal === "admin" ? "adminBookingVisibility" : "posAvailability";
+    const svcVisField = portal === "admin" ? "adminBookingVisibility" : "isPosAvailable";
+    const hierarchy = await loadHierarchyForPortal(portal);
 
     const customer = await Customer.findOne(
       Customer.notDeletedFilter({ _id: customerId, status: 1 })
@@ -180,12 +183,12 @@ async function createOrder(req, res) {
       let eventParts = null;
 
       if (refType === "Event") {
-        eventParts = await resolveEventLine(line, { portal: "pos" });
+        eventParts = await resolveEventLine(line, { portal });
         ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
-          Item.notDeletedFilter({ _id: refId, status: 1, posAvailability: true })
+          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
         ).populate("generalLedger", "gstType");
         if (!item || !offeringInPosHierarchy(item, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `An item in the cart is no longer available.`;
@@ -197,7 +200,7 @@ async function createOrder(req, res) {
         generalLedgerId = item.generalLedger?._id ?? null;
       } else if (refType === "Service") {
         const svc = await Service.findOne(
-          Service.notDeletedFilter({ _id: refId, status: 1, isPosAvailable: true })
+          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true })
         ).populate("generalLedger", "gstType");
         if (!svc || !offeringInPosHierarchy(svc, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A service in the cart is no longer available.`;
@@ -209,7 +212,7 @@ async function createOrder(req, res) {
         generalLedgerId = svc.generalLedger?._id ?? null;
       } else {
         const gi = await GeneralItem.findOne(
-          GeneralItem.notDeletedFilter({ _id: refId, status: 1, posAvailability: true })
+          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
         ).populate("generalLedger", "gstType");
         if (!gi || !offeringInPosHierarchy(gi, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A product in the cart is no longer available.`;
@@ -318,6 +321,7 @@ async function createOrder(req, res) {
         paymentMode: paymentModeId,
         paymentModeName: paymentMode.name,
         orderStatus: "pending",
+        portal,
         expiresAt,
         bookedBy: req.auth?.userId ?? null,
         entity: req.auth?.entityId ?? null,
@@ -328,7 +332,7 @@ async function createOrder(req, res) {
     // ── 3. Place inventory reservations ─────────────────────────────────
     try {
       // Who is booking (and from which portal) only matters to Event seat holds.
-      const holdOptions = resolvedLines.some((l) => l.refType === "Event") ? [{ ownerId: req.auth?.userId ?? null, posOnly: true }] : [];
+      const holdOptions = resolvedLines.some((l) => l.refType === "Event") ? [{ ownerId: req.auth?.userId ?? null, posOnly: portal !== "admin" }] : [];
       await placeReservationsForOrder(resolvedLines, order._id, ...holdOptions);
     } catch (reservationError) {
       await PosOrder.findByIdAndUpdate(order._id, { orderStatus: "cancelled" });
@@ -443,6 +447,7 @@ async function writePosBookingFromOrder(order, paidAmount, paymentOverride = {})
       paymentModeName: paymentOverride.paymentModeName ?? order.paymentModeName,
       paymentStatus: bookingPaymentStatus,
       bookingStatus: "confirmed",
+      portal: order.portal ?? "pos",
       bookedBy: order.bookedBy,
       entity: order.entity,
       bookedAt: now,
@@ -652,6 +657,8 @@ async function listBookings(req, res) {
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
 
     const filter = PosBooking.notDeletedFilter();
+    // The counter's ledger never lists the Admin Panel's bookings (older records have no portal and are POS).
+    filter.portal = req.posPortal === "admin" ? "admin" : { $ne: "admin" };
     if (req.query.status && POS_BOOKING_STATUSES.includes(req.query.status)) {
       filter.bookingStatus = req.query.status;
     }
@@ -676,11 +683,12 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber referenceId")
         .select(
-          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus bookedAt"
+          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal bookedAt"
         )
         .sort({ bookedAt: -1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize),
+        // listWindow lets the Admin Panel's merged ledger ask for an exact slice.
+        .skip(req.listWindow?.skip ?? (page - 1) * pageSize)
+        .limit(req.listWindow?.limit ?? pageSize),
       PosBooking.countDocuments(filter),
     ]);
 
@@ -729,6 +737,7 @@ async function listBookings(req, res) {
         amountPaid,
         balanceAmount: +(b.grandTotal - amountPaid).toFixed(2),
         bookingStatus: b.bookingStatus,
+        portal: b.portal ?? "pos",
         bookedAt: b.bookedAt,
       };
     });
@@ -775,6 +784,7 @@ async function getBookingDetail(req, res) {
       res,
       response: {
         ...booking.toObject(),
+        portal: booking.portal ?? "pos",
         transactions,
         amountPaid,
         balanceAmount: +(booking.grandTotal - amountPaid).toFixed(2),
@@ -1351,6 +1361,7 @@ async function writePosBookingOnly(order, amountNow, transaction) {
       paymentModeName: transaction.paymentModeName,
       paymentStatus: bookingPaymentStatus,
       bookingStatus: "confirmed",
+      portal: order.portal ?? "pos",
       bookedBy: order.bookedBy,
       entity: order.entity,
       bookedAt: now,
@@ -1505,7 +1516,8 @@ registerPaymentHandler(ORIGIN_PREFIXES.POS, confirmPosPayment);
 
 // ─── router assembly ──────────────────────────────────────────────────────
 
-function registerPosOrderRoutes(r) {
+/** Order creation and every payment route (Cash / PayNow / NETS / card / manual confirm). Mounted on both the POS and the Admin trees. */
+function registerPosOrderWriteRoutes(r) {
   r.post("/orders", requirePermission("admin-booking", "fullAccess"), validateBody(createOrderSchema), createOrder);
   r.post("/orders/:id/confirm", requirePermission("admin-booking", "fullAccess"), confirmOrder);
   r.get("/orders/:id/status", requirePermission("admin-booking", "view"), getOrderStatus);
@@ -1514,7 +1526,10 @@ function registerPosOrderRoutes(r) {
   r.post("/orders/:id/credit-card/initiate", requirePermission("admin-booking", "fullAccess"), initiateCreditCardPaymentRoute);
   r.post("/credit-card/initiate", requirePermission("admin-booking", "fullAccess"), initiateCreditCardByReferenceRoute);
   r.post("/manual-confirm", requirePermission("admin-booking", "fullAccess"), manualConfirmTerminalPayment);
+}
 
+/** The POS counter's own transactions ledger routes. */
+function registerPosLedgerRoutes(r) {
   r.get("/bookings", requirePermission("pos-transactions", "view"), listBookings);
   r.get("/bookings/:id", requirePermission("pos-transactions", "view"), getBookingDetail);
   r.get("/bookings/:id/ticket-groups", requirePermission("pos-transactions", "view"), getBookingTicketGroups);
@@ -1527,8 +1542,17 @@ function registerPosOrderRoutes(r) {
   );
 }
 
+/** Everything the POS tree needs (the Admin tree mounts the two halves separately). */
+function registerPosOrderRoutes(r) {
+  registerPosOrderWriteRoutes(r);
+  registerPosLedgerRoutes(r);
+}
+
 module.exports = {
   registerPosOrderRoutes,
+  registerPosOrderWriteRoutes,
+  getBookingDetail,
+  getBookingTicketGroups,
   confirmPosPayment,
   // used by controllers/payments/paynow/generate-qr
   createPendingPayment,

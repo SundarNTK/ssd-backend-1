@@ -91,7 +91,9 @@ function patchSlotStage(slotKey, patch) {
 
 function baseFilter(eventId, { posOnly }) {
   const filter = { _id: toObjectId(eventId), isDeleted: false, status: 1, endDate: { $gte: todayStart() } };
+  // POS holds need the POS flag; the Admin Panel's need the Admin Booking one.
   if (posOnly) filter.posVisibility = true;
+  else filter.adminBookingVisibility = { $ne: false };
   return filter;
 }
 

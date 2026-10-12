@@ -580,7 +580,8 @@ async function listPosEvents(req, res) {
     const todayStart = new Date(`${sgToday}T00:00:00.000Z`);
 
     const filter = Event.notDeletedFilter({ status: 1, endDate: { $gte: todayStart } });
-    if (!isAdmin) filter.posVisibility = true;
+    if (isAdmin) filter.adminBookingVisibility = { $ne: false };
+    else filter.posVisibility = true;
 
     const events = await Event.find(filter)
       .populate({ path: "category", select: "name color" })
@@ -763,8 +764,10 @@ async function decorateGeneralItems(generalItems) {
  */
 async function listPaymentModes(req, res) {
   try {
+    // Each portal reads its own flag: the counter posAvailability, the Admin Panel adminBookingVisibility.
+    const visibility = req.posPortal === "admin" ? { adminBookingVisibility: { $ne: false } } : { posAvailability: true };
     const modes = await PaymentMode.find(
-      PaymentMode.notDeletedFilter({ status: 1, posAvailability: true })
+      PaymentMode.notDeletedFilter({ status: 1, ...visibility })
     )
       .select("name description")
       .sort({ name: 1 });
@@ -1933,8 +1936,8 @@ async function listBookings(req, res) {
           "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal bookedAt"
         )
         .sort({ bookedAt: -1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize),
+        .skip(req.listWindow?.skip ?? (page - 1) * pageSize)
+        .limit(req.listWindow?.limit ?? pageSize),
       Booking.countDocuments(filter),
     ]);
 
@@ -2323,6 +2326,87 @@ function registerCatalogueRoutes(r) {
 }
 
 /**
+ * Runs a list handler against a fake response and hands back what it would have sent, so the
+ * Admin ledger can stitch the two booking stores together.
+ */
+function captureList(handler, req, listWindow) {
+  return new Promise((resolve, reject) => {
+    const fake = {
+      statusCode: 200,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        if (this.statusCode >= 400) reject(new Error(body?.message || "List failed."));
+        else resolve(body?.data);
+        return this;
+      },
+    };
+    Promise.resolve(handler({ ...req, query: { ...req.query }, listWindow }, fake)).catch(reject);
+  });
+}
+
+/**
+ * Admin Transactions: bookings made from the Admin Panel now live with the counter's
+ * (pos_bookings, portal "admin"); older ones are still in bookings. New ones are always newer
+ * than old ones, so the ledger is simply the new list followed by the old one.
+ * Any other portal filter (Customer) reads the older store as before.
+ */
+async function adminListBookings(req, res) {
+  try {
+    if (req.query.portal !== "admin") return listBookings(req, res);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
+    const skip = (page - 1) * pageSize;
+
+    const [posCount, legacyCount] = await Promise.all([
+      captureList(posOrders.listBookings, req, { skip: 0, limit: 1 }),
+      captureList(listBookings, req, { skip: 0, limit: 1 }),
+    ]);
+    const posTotal = posCount.total;
+    const items = [];
+    if (skip < posTotal) {
+      const part = await captureList(posOrders.listBookings, req, { skip, limit: Math.min(pageSize, posTotal - skip) });
+      items.push(...part.items);
+    }
+    const remaining = pageSize - items.length;
+    if (remaining > 0) {
+      const part = await captureList(listBookings, req, { skip: Math.max(0, skip - posTotal), limit: remaining });
+      items.push(...part.items);
+    }
+    return responseHandler({ res, response: { items, total: posTotal + legacyCount.total, page, pageSize } });
+  } catch (error) {
+    return exceptionHandler({ res, error });
+  }
+}
+
+/** Sends a booking-by-id request to whichever store holds that booking. */
+function byBookingStore(posHandler, legacyHandler) {
+  return async function routeByStore(req, res, next) {
+    try {
+      const id = req.params.id;
+      const inPosStore = mongoose.isValidObjectId(id) && (await PosBooking.exists({ _id: id }));
+      return (inPosStore ? posHandler : legacyHandler)(req, res, next);
+    } catch (error) {
+      return exceptionHandler({ res, error });
+    }
+  };
+}
+
+function registerAdminLedgerRoutes(r) {
+  r.get("/bookings", requireLedgerAccess("view"), adminListBookings);
+  r.get("/bookings/:id", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingDetail, getBookingDetail));
+  r.get("/bookings/:id/ticket-groups", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingTicketGroups, getAdminBookingTicketGroups));
+  r.post(
+    "/bookings/:id/payments",
+    requireLedgerAccess("fullAccess"),
+    validateBody(recordPaymentSchema),
+    byBookingStore(posOrders.recordBookingPayment, recordBookingPayment)
+  );
+}
+
+/**
  * The Admin Panel's own order/booking/payment WRITE routes — unchanged from
  * before the pos_orders split, still backed by the shared Order/Booking/
  * Transaction collections (models/orders, models/bookings,
@@ -2356,7 +2440,8 @@ router.get("/health", (_req, res) =>
 // Order/booking/payment writes here are backed by pos_orders/pos_bookings/
 // pos_transactions (controllers/pos-orders), not the shared Order/Booking/
 // Transaction collections the Admin tree below still uses.
-const { registerPosOrderRoutes } = require("../pos-orders");
+const posOrders = require("../pos-orders");
+const { registerPosOrderRoutes, registerPosOrderWriteRoutes } = posOrders;
 const posBookingRouter = express.Router();
 registerCatalogueRoutes(posBookingRouter);
 registerPosOrderRoutes(posBookingRouter);
@@ -2365,7 +2450,10 @@ router.use("/booking", setPortal("pos"), posBookingRouter);
 // ── Admin Panel: /pos/admin/booking/* → portal = "admin" ─────────────────
 const adminBookingRouter = express.Router();
 registerCatalogueRoutes(adminBookingRouter);
-registerAdminBookingWriteRoutes(adminBookingRouter);
+// Same order + payment implementation as the counter (Cash, PayNow, NETS, card, manual confirm),
+// stamped portal "admin"; only the ledger below differs (it also reads the older Admin records).
+registerPosOrderWriteRoutes(adminBookingRouter);
+registerAdminLedgerRoutes(adminBookingRouter);
 router.use("/admin/booking", setPortal("admin"), adminBookingRouter);
 
 module.exports = router;
