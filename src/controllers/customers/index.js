@@ -160,6 +160,16 @@ async function update(req, res) {
     await customer.save();
     await customer.populate(FAMILY_MEMBER_POPULATE);
 
+    // The devotee's login follows the profile: Inactive here locks them out of the portal right
+    // away (the API re-checks on every request), Active lets them back in. Only a devotee-type
+    // login is switched - a staff member's own account is managed from Users, not from here.
+    if (status !== undefined && customer.linkedUserId) {
+      await User.updateOne(
+        { _id: customer.linkedUserId, userType: USER_TYPES.CUSTOMER },
+        { $set: { status, updatedBy: req.auth?.userId || null } }
+      );
+    }
+
     return responseHandler({ res, response: customer, successMessage: "Devotee profile updated successfully." });
   } catch (error) {
     if (error?.code === 11000) {

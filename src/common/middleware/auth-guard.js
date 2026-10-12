@@ -2,6 +2,7 @@ const { verifySessionToken } = require("../utils/jwt");
 const { exceptionHandler } = require("../../utilities/handlers");
 const { User } = require("../../models/users");
 const mergeRolePermissions = require("../../utilities/helpers/merge-role-permissions");
+const isCustomerProfileInactive = require("../../utilities/helpers/is-customer-profile-inactive");
 
 /**
  * Verifies the JWT, then re-reads the account from the database.
@@ -39,7 +40,7 @@ async function authGuard(req, res, next) {
 
     // Covers deleted, deactivated, and access-period-expired accounts in one
     // check — same rule login uses, applied continuously instead of once.
-    if (!user || !user.isAccountUsable()) {
+    if (!user || !user.isAccountUsable() || (await isCustomerProfileInactive(user))) {
       return exceptionHandler({
         res,
         error: "This account is no longer active. Please contact an administrator.",

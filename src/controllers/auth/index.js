@@ -9,6 +9,7 @@ const { generateRawToken, hashToken, addMinutes } = require("../../common/utils/
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
 const findActiveEntityByCode = require("../../utilities/helpers/find-active-entity-by-code");
 const resolveMergedPermissions = require("../../utilities/helpers/resolve-merged-permissions");
+const isCustomerProfileInactive = require("../../utilities/helpers/is-customer-profile-inactive");
 const findActiveRoleByName = require("../../utilities/helpers/find-active-role-by-name");
 const findActiveUserByEmail = require("../../utilities/helpers/find-active-user-by-email");
 const findActiveUserByEmailOrMobile = require("../../utilities/helpers/find-active-user-by-email-or-mobile");
@@ -50,6 +51,9 @@ async function login(req, res) {
     }
     if (user.accessUpto && user.accessUpto.getTime() < Date.now()) {
       throw "Your access to this account has expired. Please contact your temple administrator.";
+    }
+    if (await isCustomerProfileInactive(user)) {
+      throw "This account has been deactivated. Please contact your temple administrator.";
     }
 
     if (!user.passwordHash) {
@@ -221,6 +225,9 @@ async function forgotPassword(req, res) {
     }
     if (user.accessUpto && user.accessUpto.getTime() < Date.now()) {
       throw "Your access to this account has expired. Please contact your temple administrator.";
+    }
+    if (await isCustomerProfileInactive(user)) {
+      throw "This account has been deactivated. Please contact your temple administrator.";
     }
 
     const rawToken = generateRawToken();
