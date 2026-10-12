@@ -89,7 +89,7 @@ function assertSlotChangesAllowed(existingSlots, incomingSlots) {
       if (!incoming || incoming.endTime !== slot.endTime) {
         throw `Slot ${label} already has ${booked} booked seat(s) - its name, date and time cannot be changed and it cannot be removed. You can only increase its seats.`;
       }
-      if (incoming.status !== 1) throw `Slot ${label} has bookings, so it cannot be made inactive.`;
+      // A booked slot may be switched Inactive (it then drops off every booking screen); its existing bookings stay as they are.
       // Seats can only go up. A slot saved with 0 seats (the old "no limit" setting) has nothing to
       // go below, so any seat count that covers what is already booked or held is accepted for it.
       if (incoming.totalSeats < slot.totalSeats) {
