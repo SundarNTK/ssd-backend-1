@@ -11,8 +11,8 @@
  *     `slotKey`.
  *   - Carries the deities picked from the event's own deity mapping, and -
  *     when the event asks for family members - the named devotees.
- *   - Takes SEATS from its slot: one seat per named devotee when the event
- *     asks for family members, otherwise one per booking. The seats are held
+ *   - Takes SEATS from its slot: exactly one seat per booking, however many
+ *     deities or family members it names. The seat is held
  *     from "add to cart" on and turn into booked seats when the booking is
  *     confirmed - see common/utils/event-seats.js for how that is done.
  */
@@ -27,8 +27,10 @@ const GST_TYPE_BY_CLASSIFICATION = {
   OUT_OF_SCOPE: "Out of Scope",
 };
 
-function seatsFor(event, devotees) {
-  return event.isFamilyMembersRequired ? Math.max(1, (devotees || []).length) : 1;
+/** One booking takes one seat on its slot - family members and deities do not add seats. */
+// eslint-disable-next-line no-unused-vars
+function seatsFor(_event, _devotees) {
+  return 1;
 }
 
 /**
