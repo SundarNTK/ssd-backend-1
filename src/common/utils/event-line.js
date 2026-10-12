@@ -18,7 +18,7 @@
  */
 const Event = require("../../models/events");
 const EventSeatHold = require("../../models/event-seat-holds");
-const { slotKeyOf, todayStart, seatsLeftOf } = require("./event-seats");
+const { slotKeyOf, todayStart, seatsLeftOf, slotHasStarted } = require("./event-seats");
 
 /** Legacy events (saved before the General Ledger field): gstClassification -> the GST Master "type". */
 const GST_TYPE_BY_CLASSIFICATION = {
@@ -52,7 +52,7 @@ async function resolveEventLine(line, { portal }) {
   let slot = null;
   if (event.isSlotRequired) {
     if (!line.slotKey) throw `Choose a slot for "${event.name}".`;
-    slot = event.slotDetails.find((s) => s.status === 1 && slotKeyOf(s) === line.slotKey && new Date(s.date) >= todayStart());
+    slot = event.slotDetails.find((s) => s.status === 1 && slotKeyOf(s) === line.slotKey && !slotHasStarted(s));
     if (!slot) throw `The selected slot for "${event.name}" is no longer available.`;
   }
 

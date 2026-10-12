@@ -53,6 +53,18 @@ function todayStart() {
   return new Date(`${sgDay}T00:00:00.000Z`);
 }
 
+/**
+ * True once the slot's start time (Singapore) has been reached. A slot is only
+ * bookable before it begins, so one that is under way or over is treated as gone.
+ * `slot.date` is the stored UTC-midnight calendar day, `startTime` is "HH:MM".
+ */
+function slotHasStarted(slot, now = Date.now()) {
+  const day = new Date(slot.date).toISOString().slice(0, 10);
+  const [h, m] = String(slot.startTime || "00:00").split(":").map((n) => Number(n) || 0);
+  const start = Date.parse(`${day}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00+08:00`);
+  return Number.isFinite(start) ? start <= now : true;
+}
+
 // ─── aggregation fragments (the same key rule as slotKeyOf, evaluated in MongoDB) ───
 
 /** `$$v` is the slot variable inside a $map / $filter. */
@@ -104,7 +116,20 @@ async function tryHoldSeats(eventId, slotKey, seats, { posOnly = false } = {}) {
             $and: [
               { $eq: [keyExpr("s"), slotKey] },
               { $eq: ["$$s.status", 1] },
-              { $gte: ["$$s.date", todayStart()] },
+              // Still to start: its Singapore start time is later than now (an unreadable time counts as started).
+              {
+                $gt: [
+                  {
+                    $dateFromString: {
+                      dateString: { $concat: [{ $dateToString: { format: "%Y-%m-%d", date: "$$s.date" } }, "T", "$$s.startTime", ":00"] },
+                      timezone: "Asia/Singapore",
+                      onError: new Date(0),
+                      onNull: new Date(0),
+                    },
+                  },
+                  "$$NOW",
+                ],
+              },
               {
                 $or: [
                   { $eq: ["$$s.totalSeats", 0] },
@@ -270,6 +295,7 @@ module.exports = {
   ORDER_HOLD_TTL_MS,
   slotKeyOf,
   todayStart,
+  slotHasStarted,
   seatsLeftOf,
   tryHoldSeats,
   releaseSeats,

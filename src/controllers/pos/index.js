@@ -80,6 +80,7 @@ const { Booking, BOOKING_STATUSES } = require("../../models/bookings");
 const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
+const { slotHasStarted } = require("../../common/utils/event-seats");
 const { holdSeats, refreshHolds, releaseHoldRoute, releaseOrphanHolds } = require("./event-holds");
 const PrintSplitSetting = require("../../models/print-split-settings");
 const findActiveEntityById = require("../../utilities/helpers/find-active-entity-by-id");
@@ -225,17 +226,14 @@ async function searchCustomers(req, res) {
  */
 async function getSelfCustomer(req, res) {
   try {
-    const customer = await ensureCustomerProfileForUser(req.auth.user, req.auth.entityId);
-    return responseHandler({
-      res,
-      response: {
-        _id: customer._id,
-        customerCode: customer.customerCode,
-        name: customer.name,
-        email: customer.email,
-        mobileNumber: customer.mobileNumber,
-      },
-    });
+    const found = await ensureCustomerProfileForUser(req.auth.user, req.auth.entityId);
+    // Same shape the customer search returns, family members included: the booking's devotee
+    // name suggestions are built from them, and this profile is what gets picked whenever
+    // nobody was selected before an offering was added.
+    const customer = await Customer.findById(found._id)
+      .select("customerCode name email mobileNumber familyMembers maxFamilyMembers")
+      .populate({ path: "familyMembers.natchathiram", select: "name tamilName" });
+    return responseHandler({ res, response: customer });
   } catch (error) {
     return exceptionHandler({ res, error });
   }
@@ -593,13 +591,16 @@ async function listPosEvents(req, res) {
       .sort({ startDate: 1, displayOrder: 1, name: 1 })
       .lean();
 
-    const items = events.map((e) => ({
-      ...e,
-      // Only slots that can still be attended: active, and not already past.
-      slotDetails: (e.slotDetails || [])
-        .filter((slot) => slot.status === 1 && new Date(slot.date) >= todayStart)
-        .sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.startTime).localeCompare(String(b.startTime))),
-    }));
+    // Only slots that have not started yet: active, and their Singapore start time still ahead.
+    // An event that needs a slot and has none left (all started or over) is not offered at all.
+    const items = events
+      .map((e) => ({
+        ...e,
+        slotDetails: (e.slotDetails || [])
+          .filter((slot) => slot.status === 1 && !slotHasStarted(slot))
+          .sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.startTime).localeCompare(String(b.startTime))),
+      }))
+      .filter((e) => !e.isSlotRequired || e.slotDetails.length > 0);
 
     return responseHandler({ res, response: { items, total: items.length } });
   } catch (error) {
@@ -804,12 +805,18 @@ async function listPaymentModes(req, res) {
  */
 async function getCatalogue(req, res) {
   try {
-    const { categories, subCategories, categoryIds, subCategoryIds } = await loadPosVisibleHierarchy();
+    // The two portals see their own visibility flags: the counter reads posAvailability /
+    // isPosAvailable, the Admin Booking screen reads adminBookingVisibility - the same rule
+    // the item / service / general-item pickers and the order routes already apply.
+    const isAdmin = req.posPortal === "admin";
+    const itemVis = isAdmin ? { adminBookingVisibility: true } : { posAvailability: true };
+    const serviceVis = isAdmin ? { adminBookingVisibility: true } : { isPosAvailable: true };
+    const { categories, subCategories, categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
     const visible = posHierarchyClause(categoryIds, subCategoryIds);
     const [items, services, generalItems] = await Promise.all([
-      Item.find(Item.notDeletedFilter({ status: 1, posAvailability: true, $and: [visible] })).select("categoryDetails"),
-      Service.find(Service.notDeletedFilter({ status: 1, isPosAvailable: true, $and: [visible] })).select("categoryDetails"),
-      GeneralItem.find(GeneralItem.notDeletedFilter({ status: 1, posAvailability: true, $and: [visible] })).select("categoryDetails"),
+      Item.find(Item.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
+      Service.find(Service.notDeletedFilter({ status: 1, ...serviceVis, $and: [visible] })).select("categoryDetails"),
+      GeneralItem.find(GeneralItem.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
     ]);
     const subCategoryById = new Map(subCategories.map((s) => [String(s._id), s]));
     const categoryById = new Map(categories.map((c) => [String(c._id), c]));
@@ -937,7 +944,7 @@ async function getCatalogue(req, res) {
     const [uncategorizedItemsRaw, uncategorizedServicesRaw] = await Promise.all([
       allUncategorizedItemIds.length
         ? decorateItems(
-            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, posAvailability: true }))
+            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, ...itemVis }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
@@ -949,7 +956,7 @@ async function getCatalogue(req, res) {
         : [],
       allUncategorizedServiceIds.length
         ? decorateServices(
-            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, isPosAvailable: true }))
+            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, ...serviceVis }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
@@ -2249,12 +2256,29 @@ async function getAdminBookingTicketGroups(req, res) {
 function requirePaymentModeAccess(req, res, next) {
   if (req.auth?.userType === USER_TYPES.SUPER_ADMIN) return next();
   const perms = req.auth?.permissions ?? {};
-  if (perms["admin-booking"]?.view || perms["pos-transactions"]?.view) return next();
+  if (LEDGER_MODULES.some((m) => perms[m]?.view) || perms["admin-booking"]?.view) return next();
   return exceptionHandler({
     res,
     error: "You don't have view access to Admin Booking or POS Transactions.",
     statusCode: 403,
   });
+}
+
+/**
+ * The three transaction ledgers (Admin / POS / Customer Transactions) read the
+ * same booking endpoints on the Admin tree, so a grant on any of them opens
+ * the list, detail and payment routes; the screen itself pins which portal it
+ * lists.
+ */
+const LEDGER_MODULES = ["admin-transactions", "pos-transactions", "customer-transactions"];
+function requireLedgerAccess(level) {
+  const guard = (req, res, next) => {
+    if (req.auth?.userType === USER_TYPES.SUPER_ADMIN) return next();
+    if (LEDGER_MODULES.some((m) => req.auth?.permissions?.[m]?.[level])) return next();
+    return exceptionHandler({ res, error: `You don't have ${level} access to transactions.`, statusCode: 403 });
+  };
+  Object.defineProperty(guard, "name", { value: `requireLedgerAccess:${level}` });
+  return guard;
 }
 
 function setPortal(portalValue) {
@@ -2312,11 +2336,11 @@ function registerAdminBookingWriteRoutes(r) {
   r.post("/orders/:id/confirm", requirePermission("admin-booking", "fullAccess"),                                   confirmOrder);
   r.get("/orders/:id/status",   requirePermission("admin-booking", "view"),                                         getOrderStatus);
 
-  r.get("/bookings",            requirePermission("pos-transactions", "view"),    listBookings);
-  r.get("/bookings/:id",        requirePermission("pos-transactions", "view"),    getBookingDetail);
-  r.get("/bookings/:id/ticket-groups", requirePermission("pos-transactions", "view"), getAdminBookingTicketGroups);
+  r.get("/bookings",            requireLedgerAccess("view"),    listBookings);
+  r.get("/bookings/:id",        requireLedgerAccess("view"),    getBookingDetail);
+  r.get("/bookings/:id/ticket-groups", requireLedgerAccess("view"), getAdminBookingTicketGroups);
 
-  r.post("/bookings/:id/payments", requirePermission("pos-transactions", "fullAccess"), validateBody(recordPaymentSchema), recordBookingPayment);
+  r.post("/bookings/:id/payments", requireLedgerAccess("fullAccess"), validateBody(recordPaymentSchema), recordBookingPayment);
 }
 
 const router = express.Router();

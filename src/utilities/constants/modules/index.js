@@ -80,8 +80,10 @@ const AVAILABLE_MODULES = [
   { key: "cms-menus", label: "CMS Menu Master", group: "CMS" },
   { key: "cms-pages", label: "CMS Page Master", group: "CMS" },
   { key: "inventory", label: "Inventory", group: "Inventory" },
-  { key: "admin-booking", label: "Admin Booking", group: "Transactions" },
+  { key: "admin-booking", label: "Admin Booking", group: "Create Bookings" },
+  { key: "admin-transactions", label: "Admin Transactions", group: "Transactions" },
   { key: "pos-transactions", label: "POS Transactions", group: "Transactions" },
+  { key: "customer-transactions", label: "Customer Transactions", group: "Transactions" },
   { key: "pos-order-confirmation", label: "POS Order Confirmation", group: "Transactions" },
   { key: "reports", label: "Custom Reports", group: "Reports" },
 ];
