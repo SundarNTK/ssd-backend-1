@@ -110,6 +110,7 @@ const {
 } = require("./request-objects");
 
 const mongoose = require("mongoose");
+const { ticketImageUrl } = require("../../common/utils/ticket-image");
 const { makeReprintHandler } = require("../../common/utils/booking-reprint");
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -2187,13 +2188,13 @@ async function computeAdminBookingTicketGroups(bookingId) {
   const generalItemIds = booking.lines.filter((l) => l.refType === "GeneralItem").map((l) => l.refId);
   const [items, services, generalItems] = await Promise.all([
     itemIds.length
-      ? Item.find({ _id: { $in: itemIds } }).select("isDeityMappingRequired printingGroup tamilName").populate("printingGroup", "name")
+      ? Item.find({ _id: { $in: itemIds } }).select("isDeityMappingRequired printingGroup tamilName ticketImage printImage").populate("printingGroup", "name")
       : [],
     serviceIds.length
-      ? Service.find({ _id: { $in: serviceIds } }).select("isDeityMappingRequired printingGroup tamilName").populate("printingGroup", "name")
+      ? Service.find({ _id: { $in: serviceIds } }).select("isDeityMappingRequired printingGroup tamilName ticketImage printImage").populate("printingGroup", "name")
       : [],
     generalItemIds.length
-      ? GeneralItem.find({ _id: { $in: generalItemIds } }).select("printingGroup tamilName").populate("printingGroup", "name")
+      ? GeneralItem.find({ _id: { $in: generalItemIds } }).select("printingGroup tamilName ticketImage printImage").populate("printingGroup", "name")
       : [],
   ]);
   const offeringsById = new Map([...items, ...services, ...generalItems].map((doc) => [String(doc._id), doc]));
@@ -2201,9 +2202,15 @@ async function computeAdminBookingTicketGroups(bookingId) {
   // behaves like a deity-mapped offering here.
   const eventIds = booking.lines.filter((l) => l.refType === "Event").map((l) => l.refId);
   if (eventIds.length) {
-    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName");
-    for (const e of eventDocs) offeringsById.set(String(e._id), { isDeityMappingRequired: true, tamilName: e.tamilName });
+    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName ticketImage printImage");
+    for (const e of eventDocs) offeringsById.set(String(e._id), { isDeityMappingRequired: true, tamilName: e.tamilName, ticketImage: e.ticketImage, printImage: e.printImage });
   }
+
+  
+  // Picture to print under each line - only when Print Split Setting's "Print image on ticket" is Yes AND the
+  // record's own master says yes and has a picture (otherwise no imageUrl is sent and the ticket is unchanged).
+  const printImageOn = setting?.printImage === true;
+  for (const doc of offeringsById.values()) doc.ticketImageUrl = ticketImageUrl(doc, printImageOn);
 
   const units = booking.lines.flatMap((line) => resolveLineUnits(line, offeringsById.get(String(line.refId)), line.deities));
   const ticketGroups = buildTicketGroups(units, splitMode);

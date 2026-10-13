@@ -8,6 +8,7 @@ const Joi = require("joi");
  */
 const updateSchema = Joi.object({
   mode: Joi.string().valid("DEITY_WISE", "PRINT_GROUP_WISE").required(),
+  printImage: Joi.boolean(),
 });
 
 module.exports = { updateSchema };

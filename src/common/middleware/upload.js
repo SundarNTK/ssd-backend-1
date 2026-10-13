@@ -146,6 +146,7 @@ function makeMultiImageUpload(specs) {
 const uploadEventImages = makeMultiImageUpload([
   { formField: "image", folder: "ssd-temple/events", label: "Event image", maxBytes: MAX_BYTES },
   { formField: "sliderImage", folder: "ssd-temple/event-sliders", label: "Slider image", maxBytes: 300 * 1024 },
+  { formField: "ticketImage", folder: "ssd-temple/ticket-images", label: "Ticket image", maxBytes: 300 * 1024 },
 ]);
 
 const uploadAvatar = makeImageUpload({
@@ -172,23 +173,22 @@ const uploadSubCategoryImage = makeImageUpload({
   label: "Sub-category image",
 });
 
-const uploadItemImage = makeImageUpload({
-  formField: "image",
-  folder: "ssd-temple/items",
-  label: "Item image",
-});
+// Item / Service / General Item / Event masters carry TWO pictures: the card picture (`image`) and a separate
+// `ticketImage` that is printed on the ticket when "Print Image on Ticket" is on. One multipart read, two uploads.
+const uploadItemImage = makeMultiImageUpload([
+  { formField: "image", folder: "ssd-temple/items", label: "Item image", maxBytes: MAX_BYTES },
+  { formField: "ticketImage", folder: "ssd-temple/ticket-images", label: "Ticket image", maxBytes: 300 * 1024 },
+]);
 
-const uploadServiceImage = makeImageUpload({
-  formField: "image",
-  folder: "ssd-temple/services",
-  label: "Service image",
-});
+const uploadServiceImage = makeMultiImageUpload([
+  { formField: "image", folder: "ssd-temple/services", label: "Service image", maxBytes: MAX_BYTES },
+  { formField: "ticketImage", folder: "ssd-temple/ticket-images", label: "Ticket image", maxBytes: 300 * 1024 },
+]);
 
-const uploadGeneralItemImage = makeImageUpload({
-  formField: "image",
-  folder: "ssd-temple/general-items",
-  label: "General Item image",
-});
+const uploadGeneralItemImage = makeMultiImageUpload([
+  { formField: "image", folder: "ssd-temple/general-items", label: "General Item image", maxBytes: MAX_BYTES },
+  { formField: "ticketImage", folder: "ssd-temple/ticket-images", label: "Ticket image", maxBytes: 300 * 1024 },
+]);
 
 const uploadEventImage = makeImageUpload({
   formField: "image",

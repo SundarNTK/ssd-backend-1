@@ -30,6 +30,10 @@ const eventSchema = new mongoose.Schema({
   tamilName: { type: String, default: "" },
   description: { type: String, default: "" },
   image: { type: String, default: null }, // full Cloudinary secure_url
+  // Print this record's picture under it on the ticket (also needs "Print image on ticket" = Yes in Print Split Setting).
+  printImage: { type: Boolean, default: false },
+  // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
+  ticketImage: { type: String, default: null },
   // Wide banner artwork (<= 300 KB) for the Customer Portal's home-page slider
   // and event cards — separate from `image`, which is a small thumbnail.
   sliderImage: { type: String, default: null },

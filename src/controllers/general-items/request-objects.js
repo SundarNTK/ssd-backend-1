@@ -24,6 +24,8 @@ const createSchema = Joi.object({
   printingGroup: objectId.required(),
   description: Joi.string().allow("").default(""),
   image: Joi.string().allow("", null).default(null),
+  printImage: Joi.boolean().default(false),
+  ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
 
   categoryDetails: Joi.array().items(categoryDetailEntry).default([]),
@@ -50,6 +52,8 @@ const updateSchema = Joi.object({
   printingGroup: objectId,
   description: Joi.string().allow(""),
   image: Joi.string().allow("", null),
+  printImage: Joi.boolean(),
+  ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
 
   categoryDetails: Joi.array().items(categoryDetailEntry),

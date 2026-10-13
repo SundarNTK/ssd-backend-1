@@ -72,6 +72,8 @@ const createSchema = Joi.object({
   salePrice: Joi.number().min(0.01).required(), // must be greater than 0
   description: Joi.string().allow("").default(""),
   image: Joi.string().allow("", null).default(null),
+  printImage: Joi.boolean().default(false),
+  ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
 
   isDeityMappingRequired: Joi.boolean().default(false),
@@ -106,6 +108,8 @@ const updateSchema = Joi.object({
   salePrice: Joi.number().min(0.01), // must be greater than 0
   description: Joi.string().allow(""),
   image: Joi.string().allow("", null),
+  printImage: Joi.boolean(),
+  ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
 
   isDeityMappingRequired: Joi.boolean(),

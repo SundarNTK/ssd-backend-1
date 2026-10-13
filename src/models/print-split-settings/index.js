@@ -17,6 +17,9 @@ const { auditablePlugin } = require("../../common/plugins/auditable");
  */
 const printSplitSettingSchema = new mongoose.Schema({
   mode: { type: String, enum: ["DEITY_WISE", "PRINT_GROUP_WISE"], default: "PRINT_GROUP_WISE", required: true },
+  // Global switch: print each offering's picture on the ticket. Off = no picture ever prints, whatever the
+  // individual masters say; on = only offerings whose own master also says yes and has a picture.
+  printImage: { type: Boolean, default: false },
 });
 
 printSplitSettingSchema.plugin(auditablePlugin);

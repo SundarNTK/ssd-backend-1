@@ -28,6 +28,10 @@ const itemSchema = new mongoose.Schema({
   salePrice: { type: Number, required: true, min: 0 },
   description: { type: String, default: "" },
   image: { type: String, default: null }, // full Cloudinary secure_url
+  // Print this record's picture under it on the ticket (also needs "Print image on ticket" = Yes in Print Split Setting).
+  printImage: { type: Boolean, default: false },
+  // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
+  ticketImage: { type: String, default: null },
   // Optional hex card colour ("" = use the POS default theme).
   color: { type: String, default: "" },
 

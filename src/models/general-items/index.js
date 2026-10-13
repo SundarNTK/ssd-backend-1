@@ -31,6 +31,10 @@ const generalItemSchema = new mongoose.Schema({
   printingGroup: { type: mongoose.Schema.Types.ObjectId, ref: "PrintingGroup", required: true },
   description: { type: String, default: "" },
   image: { type: String, default: null }, // full Cloudinary secure_url
+  // Print this record's picture under it on the ticket (also needs "Print image on ticket" = Yes in Print Split Setting).
+  printImage: { type: Boolean, default: false },
+  // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
+  ticketImage: { type: String, default: null },
   color: { type: String, default: "" },
 
   categoryDetails: { type: [categoryDetailSchema], default: [] },

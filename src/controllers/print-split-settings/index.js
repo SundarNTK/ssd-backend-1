@@ -33,7 +33,11 @@ async function updateSetting(req, res) {
   try {
     const doc = await PrintSplitSetting.findOneAndUpdate(
       {},
-      { mode: req.body.mode, updatedBy: req.auth?.userId || null },
+      {
+        mode: req.body.mode,
+        ...(req.body.printImage !== undefined ? { printImage: req.body.printImage } : {}),
+        updatedBy: req.auth?.userId || null,
+      },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
     return responseHandler({ res, response: doc, successMessage: "Print split setting updated successfully." });

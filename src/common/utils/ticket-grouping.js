@@ -87,6 +87,7 @@ function resolveLineUnits(line, offeringDoc, populatedDeities) {
         deityName: deity.name,
         deityTamilName: deity.tamilName || null,
         offeringTamilName: offeringDoc.tamilName || null,
+        offeringImageUrl: offeringDoc.ticketImageUrl || null,
         printGroupId: String(group._id ?? group),
         printGroupName: group.name ?? null,
         allocatedLineTotal: perDeityAmounts[index],
@@ -107,6 +108,7 @@ function resolveLineUnits(line, offeringDoc, populatedDeities) {
       deityName: null,
       deityTamilName: null,
       offeringTamilName: offeringDoc.tamilName || null,
+      offeringImageUrl: offeringDoc.ticketImageUrl || null,
       printGroupId: String(group._id ?? group),
       printGroupName: group.name ?? null,
       allocatedLineTotal: line.lineTotal,
@@ -133,6 +135,9 @@ function toTicketLine(unit) {
     // printed ticket could no longer show which devotee's name belongs
     // under which item/deity.
     devotees: (unit.line.devotees || []).map((d) => ({ name: d.name, nakshatra: d.nakshatra })),
+    // Picture to print under this line - only present when both "print image" switches are on and the
+    // record has a picture (see common/utils/ticket-image.js). Absent = the ticket prints as before.
+    ...(unit.offeringImageUrl ? { imageUrl: unit.offeringImageUrl } : {}),
     // Event lines only — the slot the ticket is for (null for Item/Service lines).
     eventSlot: unit.line.eventSlot
       ? {
