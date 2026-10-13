@@ -82,6 +82,7 @@ const posBookingSchema = new mongoose.Schema({
   // Which screen took the booking: the POS counter, or the Admin Panel's Booking page (same
   // order / payment flow, so same collections). Records from before this field are POS.
   portal: { type: String, enum: ["pos", "admin"], default: "pos" },
+  ...require("../../common/utils/booking-reprint").reprintFields,
   bookedAt: { type: Date, required: true },
 
   // Denormalized snapshots — see common/utils/entity-snapshot.

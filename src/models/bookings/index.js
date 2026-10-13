@@ -86,6 +86,7 @@ const bookingSchema = new mongoose.Schema({
   // Copied from the originating Order at confirm time — which surface
   // (Admin Panel, POS counter, or future Customer Portal) created this booking.
   portal: { type: String, enum: PORTAL_TYPES, default: "admin" },
+  ...require("../../common/utils/booking-reprint").reprintFields,
 
   bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   entity: { type: mongoose.Schema.Types.ObjectId, default: null },

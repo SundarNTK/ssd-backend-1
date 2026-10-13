@@ -110,6 +110,7 @@ const {
 } = require("./request-objects");
 
 const mongoose = require("mongoose");
+const { makeReprintHandler } = require("../../common/utils/booking-reprint");
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -1933,7 +1934,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber")
         .select(
-          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal bookedAt"
+          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         .skip(req.listWindow?.skip ?? (page - 1) * pageSize)
@@ -1982,6 +1983,7 @@ async function listBookings(req, res) {
         balanceAmount: +(b.grandTotal - amountPaid).toFixed(2),
         bookingStatus: b.bookingStatus,
         portal: b.portal,
+        reprintCount: b.reprintCount ?? 0,
         bookedAt: b.bookedAt,
       };
     });
@@ -2394,10 +2396,13 @@ function byBookingStore(posHandler, legacyHandler) {
   };
 }
 
+const reprintLegacyBooking = makeReprintHandler(Booking);
+
 function registerAdminLedgerRoutes(r) {
   r.get("/bookings", requireLedgerAccess("view"), adminListBookings);
   r.get("/bookings/:id", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingDetail, getBookingDetail));
   r.get("/bookings/:id/ticket-groups", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingTicketGroups, getAdminBookingTicketGroups));
+  r.post("/bookings/:id/reprint", requireLedgerAccess("edit"), byBookingStore(posOrders.reprintPosBooking, reprintLegacyBooking));
   r.post(
     "/bookings/:id/payments",
     requireLedgerAccess("fullAccess"),

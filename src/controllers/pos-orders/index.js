@@ -53,6 +53,8 @@ const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
 const { PosOrder } = require("../../models/pos-orders");
 const { PosBooking, POS_BOOKING_STATUSES } = require("../../models/pos-bookings");
+const { makeReprintHandler } = require("../../common/utils/booking-reprint");
+const reprintPosBooking = makeReprintHandler(PosBooking);
 const { PosTransaction } = require("../../models/pos-transactions");
 const PrintSplitSetting = require("../../models/print-split-settings");
 const findActiveEntityById = require("../../utilities/helpers/find-active-entity-by-id");
@@ -683,7 +685,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber referenceId")
         .select(
-          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal bookedAt"
+          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         // listWindow lets the Admin Panel's merged ledger ask for an exact slice.
@@ -738,6 +740,7 @@ async function listBookings(req, res) {
         balanceAmount: +(b.grandTotal - amountPaid).toFixed(2),
         bookingStatus: b.bookingStatus,
         portal: b.portal ?? "pos",
+        reprintCount: b.reprintCount ?? 0,
         bookedAt: b.bookedAt,
       };
     });
@@ -1530,6 +1533,7 @@ function registerPosOrderWriteRoutes(r) {
 
 /** The POS counter's own transactions ledger routes. */
 function registerPosLedgerRoutes(r) {
+  r.post("/bookings/:id/reprint", requirePermission("pos-transactions", "edit"), reprintPosBooking);
   r.get("/bookings", requirePermission("pos-transactions", "view"), listBookings);
   r.get("/bookings/:id", requirePermission("pos-transactions", "view"), getBookingDetail);
   r.get("/bookings/:id/ticket-groups", requirePermission("pos-transactions", "view"), getBookingTicketGroups);
@@ -1553,6 +1557,7 @@ module.exports = {
   registerPosOrderWriteRoutes,
   getBookingDetail,
   getBookingTicketGroups,
+  reprintPosBooking,
   confirmPosPayment,
   // used by controllers/payments/paynow/generate-qr
   createPendingPayment,
