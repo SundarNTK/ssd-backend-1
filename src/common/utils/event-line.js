@@ -60,14 +60,14 @@ async function resolveEventLine(line, { portal }) {
   }
 
   // ── deities ───────────────────────────────────────────────────────────
+  // An event with no deities mapped does not need one (nothing to choose); one that has deities needs at least one picked.
   const mapped = event.deityMapping.map(String);
-  if (mapped.length === 0) {
-    throw `"${event.name}" has no deities mapped in the Event master, so it cannot be booked here yet.`;
-  }
-  const deities = line.deities || [];
-  if (deities.length === 0) throw `Select at least one deity for "${event.name}".`;
-  if (deities.some((d) => !mapped.includes(String(d)))) {
-    throw `A selected deity does not belong to "${event.name}".`;
+  const deities = mapped.length === 0 ? [] : line.deities || [];
+  if (mapped.length > 0) {
+    if (deities.length === 0) throw `Select at least one deity for "${event.name}".`;
+    if (deities.some((d) => !mapped.includes(String(d)))) {
+      throw `A selected deity does not belong to "${event.name}".`;
+    }
   }
 
   // ── devotees ──────────────────────────────────────────────────────────

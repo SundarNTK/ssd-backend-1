@@ -892,8 +892,18 @@ async function computeBookingTicketGroups(bookingId) {
   // behaves like a deity-mapped offering here.
   const eventIds = booking.lines.filter((l) => l.refType === "Event").map((l) => l.refId);
   if (eventIds.length) {
-    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName ticketImage printImage");
-    for (const e of eventDocs) offeringsById.set(String(e._id), { isDeityMappingRequired: true, tamilName: e.tamilName, ticketImage: e.ticketImage, printImage: e.printImage });
+    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName ticketImage printImage deityMapping");
+    for (const e of eventDocs) {
+      const hasDeities = (e.deityMapping || []).length > 0;
+      offeringsById.set(String(e._id), {
+        isDeityMappingRequired: hasDeities,
+        // An event with no deity has no Print Group of its own either: it prints on its own ticket under a stand-in group.
+        ...(hasDeities ? {} : { printingGroup: { _id: `event-${e._id}`, name: null } }),
+        tamilName: e.tamilName,
+        ticketImage: e.ticketImage,
+        printImage: e.printImage,
+      });
+    }
   }
 
   
