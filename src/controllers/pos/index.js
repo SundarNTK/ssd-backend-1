@@ -603,7 +603,7 @@ async function listPosEvents(req, res) {
           .filter((slot) => slot.status === 1 && !slotHasStarted(slot))
           .sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.startTime).localeCompare(String(b.startTime))),
       }))
-      .filter((e) => !e.isSlotRequired || e.slotDetails.length > 0);
+      .filter((e) => e.slotDetails.length > 0);
 
     return responseHandler({ res, response: { items, total: items.length } });
   } catch (error) {

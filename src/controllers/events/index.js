@@ -33,15 +33,14 @@ function assertDatesValid({ dateType, eventDates, startDate, endDate, isSlotRequ
     throw "Select at least one event date.";
   }
 
-  if (isSlotRequired) {
-    if (!slotDetails || slotDetails.length === 0) {
-      throw "At least one slot is required when Slot Required is set to Yes.";
-    }
-    for (const slot of slotDetails) {
-      const slotDate = new Date(slot.date);
-      if (slotDate < start || slotDate > end) {
-        throw `Slot "${slot.slotName}" date must be between the event's start and end date.`;
-      }
+  // Every event needs at least one slot (there is no "slot not required" any more).
+  if (!slotDetails || slotDetails.length === 0) {
+    throw "At least one slot is required.";
+  }
+  for (const slot of slotDetails) {
+    const slotDate = new Date(slot.date);
+    if (slotDate < start || slotDate > end) {
+      throw `Slot "${slot.slotName}" date must be between the event's start and end date.`;
     }
   }
 }
@@ -149,6 +148,7 @@ const totalHeldExpr = { $sum: { $map: { input: "$slotDetails", as: "s", in: held
 
 async function create(req, res) {
   try {
+    req.body.isSlotRequired = true;
     assertDatesValid(req.body);
     assertSlotTimes([], req.body.slotDetails);
     req.body.slotDetails = withZeroCounters(req.body.slotDetails);
@@ -193,17 +193,14 @@ async function update(req, res) {
         eventDates: req.body.eventDates ?? existing.eventDates,
         startDate: req.body.startDate ?? existing.startDate,
         endDate: req.body.endDate ?? existing.endDate,
-        isSlotRequired: req.body.isSlotRequired ?? existing.isSlotRequired,
         slotDetails: req.body.slotDetails ?? existing.slotDetails,
       });
 
       if (req.body.status === 0 && bookedAlready) {
         throw "This event has bookings, so it cannot be made inactive.";
       }
-      if (req.body.isSlotRequired === false && bookedAlready) {
-        throw "This event has bookings on its slots, so slots cannot be switched off.";
-      }
 
+      req.body.isSlotRequired = true;
       const incomingSlots = req.body.slotDetails;
       if (incomingSlots) {
         assertSlotChangesAllowed(existingSlots, incomingSlots);

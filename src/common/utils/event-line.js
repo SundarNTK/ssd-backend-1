@@ -52,12 +52,10 @@ async function resolveEventLine(line, { portal }) {
   if (!event) throw "An event in the cart is no longer available.";
 
   // ── slot ──────────────────────────────────────────────────────────────
-  let slot = null;
-  if (event.isSlotRequired) {
-    if (!line.slotKey) throw `Choose a slot for "${event.name}".`;
-    slot = event.slotDetails.find((s) => s.status === 1 && slotKeyOf(s) === line.slotKey && !slotHasStarted(s));
-    if (!slot) throw `The selected slot for "${event.name}" is no longer available.`;
-  }
+  // Every event is booked into a slot.
+  if (!line.slotKey) throw `Choose a slot for "${event.name}".`;
+  const slot = event.slotDetails.find((s) => s.status === 1 && slotKeyOf(s) === line.slotKey && !slotHasStarted(s));
+  if (!slot) throw `The selected slot for "${event.name}" is no longer available.`;
 
   // ── deities ───────────────────────────────────────────────────────────
   // An event with no deities mapped does not need one (nothing to choose); one that has deities needs at least one picked.

@@ -35,7 +35,7 @@ const createSchema = Joi.object({
   startDate: Joi.date().required(),
   endDate: Joi.date().required(),
 
-  isSlotRequired: Joi.boolean().default(false),
+  isSlotRequired: Joi.boolean().default(true),
   slotDetails: Joi.array().items(slotDetailEntry).default([]),
 
   salePrice: Joi.number().min(0.01).required(), // must be greater than 0

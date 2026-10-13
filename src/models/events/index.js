@@ -51,7 +51,7 @@ const eventSchema = new mongoose.Schema({
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
 
-  isSlotRequired: { type: Boolean, default: false },
+  isSlotRequired: { type: Boolean, default: true },
   slotDetails: { type: [slotDetailSchema], default: [] },
 
   salePrice: { type: Number, required: true, min: 0 },
