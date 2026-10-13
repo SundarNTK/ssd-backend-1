@@ -159,7 +159,9 @@ function groupUnitsByKey(units, keyFn, headerFn) {
   const totalCentsByKey = new Map();
   for (const unit of units) {
     const key = keyFn(unit);
-    if (!groups.has(key)) groups.set(key, { ...headerFn(unit), lines: [] });
+    // `key` identifies this ticket within the booking (it follows the Print Split Setting: a print group, a deity,
+    // or one service line + deity), so a reprint can say exactly which ticket it printed.
+    if (!groups.has(key)) groups.set(key, { key, ...headerFn(unit), lines: [] });
     const group = groups.get(key);
     group.lines.push(toTicketLine(unit));
     totalCentsByKey.set(key, (totalCentsByKey.get(key) || 0) + Math.round((unit.allocatedLineTotal || 0) * 100));

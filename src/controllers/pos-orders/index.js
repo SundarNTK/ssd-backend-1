@@ -54,7 +54,7 @@ const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
 const { PosOrder } = require("../../models/pos-orders");
 const { PosBooking, POS_BOOKING_STATUSES } = require("../../models/pos-bookings");
-const { makeReprintHandler } = require("../../common/utils/booking-reprint");
+const { makeReprintHandler, ticketReprintCounts } = require("../../common/utils/booking-reprint");
 const reprintPosBooking = makeReprintHandler(PosBooking);
 const { PosTransaction } = require("../../models/pos-transactions");
 const PrintSplitSetting = require("../../models/print-split-settings");
@@ -904,6 +904,9 @@ async function computeBookingTicketGroups(bookingId) {
 
   const units = booking.lines.flatMap((line) => resolveLineUnits(line, offeringsById.get(String(line.refId)), line.deities));
   const ticketGroups = buildTicketGroups(units, splitMode);
+  // How many times each ticket has been reprinted so far (the Reprint popup shows it and numbers the next one).
+  const reprintCounts = ticketReprintCounts(booking.reprints);
+  for (const g of ticketGroups) g.reprintCount = reprintCounts.get(g.key) || 0;
 
   return {
     ticketGroups,

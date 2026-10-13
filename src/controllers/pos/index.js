@@ -111,7 +111,7 @@ const {
 
 const mongoose = require("mongoose");
 const { ticketImageUrl } = require("../../common/utils/ticket-image");
-const { makeReprintHandler } = require("../../common/utils/booking-reprint");
+const { makeReprintHandler, ticketReprintCounts } = require("../../common/utils/booking-reprint");
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -2214,6 +2214,9 @@ async function computeAdminBookingTicketGroups(bookingId) {
 
   const units = booking.lines.flatMap((line) => resolveLineUnits(line, offeringsById.get(String(line.refId)), line.deities));
   const ticketGroups = buildTicketGroups(units, splitMode);
+  // How many times each ticket has been reprinted so far (the Reprint popup shows it and numbers the next one).
+  const reprintCounts = ticketReprintCounts(booking.reprints);
+  for (const g of ticketGroups) g.reprintCount = reprintCounts.get(g.key) || 0;
 
   return {
     ticketGroups,
