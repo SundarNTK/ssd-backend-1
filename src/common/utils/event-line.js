@@ -62,7 +62,8 @@ async function resolveEventLine(line, { portal }) {
   const mapped = event.deityMapping.map(String);
   const deities = mapped.length === 0 ? [] : line.deities || [];
   if (mapped.length > 0) {
-    if (deities.length === 0) throw `Select at least one deity for "${event.name}".`;
+    if (deities.length === 0) throw `Select a deity for "${event.name}".`;
+    if (deities.length > 1) throw `Only one deity can be chosen for "${event.name}".`;
     if (deities.some((d) => !mapped.includes(String(d)))) {
       throw `A selected deity does not belong to "${event.name}".`;
     }
