@@ -19,7 +19,7 @@ const createPendingUser = require("../../utilities/helpers/create-pending-user")
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { User } = require("../../models/users");
-const { USER_TYPES } = require("../../utilities/constants/user-types");
+const { USER_TYPES, isAdminPanelType } = require("../../utilities/constants/user-types");
 const {
   loginSchema,
   activateSchema,
@@ -62,6 +62,17 @@ async function login(req, res) {
 
     const passwordMatches = await comparePassword(password, user.passwordHash);
     if (!passwordMatches) throw genericError;
+
+    // Portal rules (checked after the password so they never reveal whether an email exists): staff may use
+    // the Customer portal, a Customer may not use Admin or POS, and POS also needs the per-user POS access flag
+    // (System Admin is never gated by it).
+    const { portal } = req.body;
+    if ((portal === "admin" || portal === "pos") && !isAdminPanelType(user.userType)) {
+      throw portal === "pos" ? "This account doesn't have POS access." : "This account doesn't have Admin Panel access.";
+    }
+    if (portal === "pos" && user.userType !== USER_TYPES.SUPER_ADMIN && !user.posAccess) {
+      throw "This account doesn't have POS access. Contact your administrator to enable it.";
+    }
 
     user.lastLoginAt = new Date();
     await user.save();

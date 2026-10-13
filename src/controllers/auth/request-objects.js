@@ -15,6 +15,8 @@ const familyMemberSchema = Joi.object({
 const loginSchema = Joi.object({
   email: Joi.string().trim().email({ tlds: false }).required(),
   password: Joi.string().min(1).required(),
+  // Which sign-in screen this came from. Absent = no portal rule (older clients).
+  portal: Joi.string().valid("admin", "pos", "customer"),
 });
 
 const activateSchema = Joi.object({
