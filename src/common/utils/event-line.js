@@ -71,7 +71,7 @@ async function resolveEventLine(line, { portal }) {
   // ── devotees ──────────────────────────────────────────────────────────
   let devotees = line.devotees || [];
   if (event.isFamilyMembersRequired) {
-    if (devotees.length === 0) throw `Add at least one devotee for "${event.name}".`;
+    // Devotee details are optional; when given they are capped below.
     if (devotees.length > event.maxFamilyMembers) {
       throw `"${event.name}" allows at most ${event.maxFamilyMembers} family member(s).`;
     }
