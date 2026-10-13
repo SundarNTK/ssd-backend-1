@@ -1,4 +1,5 @@
 const express = require("express");
+const requireTicketImage = require("../../common/middleware/require-ticket-image");
 const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadServiceImage, hydrateMultipartBody } = require("../../common/middleware/upload");
@@ -37,6 +38,7 @@ router.post(
   uploadServiceImage,
   hydrateMultipartBody,
   validateBody(createSchema),
+  requireTicketImage(Service),
   crud.create
 );
 router.put(
@@ -45,6 +47,7 @@ router.put(
   uploadServiceImage,
   hydrateMultipartBody,
   validateBody(updateSchema),
+  requireTicketImage(Service),
   crud.update
 );
 router.delete("/services/:id", requirePermission("services", "fullAccess"), crud.remove);
