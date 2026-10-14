@@ -126,6 +126,21 @@ function assertSlotTimes(existingSlots, incomingSlots) {
   }
 }
 
+/** Two active slots on the same date cannot run at overlapping times (one may start when the other ends). */
+function assertNoSlotOverlap(slots) {
+  const active = (slots || []).filter((s) => (s.status ?? 1) === 1 && s.startTime && s.endTime);
+  for (let i = 0; i < active.length; i += 1) {
+    for (let j = i + 1; j < active.length; j += 1) {
+      const a = active[i];
+      const b = active[j];
+      if (dayOf(a) !== dayOf(b)) continue;
+      if (String(a.startTime) < String(b.endTime) && String(b.startTime) < String(a.endTime)) {
+        throw `Slot "${b.slotName}" (${b.startTime}-${b.endTime}) overlaps slot "${a.slotName}" (${a.startTime}-${a.endTime}) on ${dayOf(a)}.`;
+      }
+    }
+  }
+}
+
 /** A slot field read from the CURRENT document inside a MongoDB expression (0 when the slot is gone). */
 function slotFieldExpr(key, field) {
   return {
@@ -152,6 +167,7 @@ async function create(req, res) {
     req.body.isSlotRequired = true;
     assertDatesValid(req.body);
     assertSlotTimes([], req.body.slotDetails);
+    assertNoSlotOverlap(req.body.slotDetails);
     req.body.slotDetails = withZeroCounters(req.body.slotDetails);
     const doc = await Event.create({ ...req.body, createdBy: req.auth?.userId || null });
     const populated = await doc.populate(POPULATE);
@@ -206,6 +222,7 @@ async function update(req, res) {
       if (incomingSlots) {
         assertSlotChangesAllowed(existingSlots, incomingSlots);
         assertSlotTimes(existingSlots, incomingSlots);
+        assertNoSlotOverlap(incomingSlots);
       }
 
       // Validate the whole proposed document the normal Mongoose way...
