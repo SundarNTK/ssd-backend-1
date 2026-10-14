@@ -75,7 +75,6 @@ const createSchema = Joi.object({
   printImage: Joi.boolean().default(false),
   sessionRequired: Joi.boolean().default(false),
   recurringRequired: Joi.boolean().default(false),
-  sessionCutoffDate: Joi.date().allow("", null).default(null),
   ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
 
@@ -88,11 +87,12 @@ const createSchema = Joi.object({
   isInventoryApplicable: Joi.boolean().default(false),
   unitOfMeasure: unitOfMeasureField.allow(null).default(null),
   threshold: Joi.number().integer().min(0).default(0),
-  minQuantity: Joi.number().integer().min(1).default(1),
-  maxQuantity: Joi.number().integer().min(0).default(0),
+  minQuantity: Joi.number().integer().min(1).required(),
+  maxQuantity: Joi.number().integer().min(Joi.ref("minQuantity")).required().messages({ "number.min": "Max Quantity cannot be less than Min Quantity." }),
   quantityReduction: Joi.number().integer().min(1).default(1),
 
-  futureBookingCutOffDate: Joi.date().allow(null).default(null),
+  // Mandatory: the last day this item can be booked (it is hidden from booking afterwards).
+  futureBookingCutOffDate: Joi.date().required(),
   isFamilyMembersRequired: Joi.boolean().default(false),
   maxFamilyMembers: Joi.number().integer().min(1).default(2),
   posAvailability: Joi.boolean().default(true),
@@ -114,7 +114,6 @@ const updateSchema = Joi.object({
   printImage: Joi.boolean(),
   sessionRequired: Joi.boolean(),
   recurringRequired: Joi.boolean(),
-  sessionCutoffDate: Joi.date().allow("", null),
   ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
 
@@ -128,10 +127,10 @@ const updateSchema = Joi.object({
   unitOfMeasure: unitOfMeasureField.allow(null),
   threshold: Joi.number().integer().min(0),
   minQuantity: Joi.number().integer().min(1),
-  maxQuantity: Joi.number().integer().min(0),
+  maxQuantity: Joi.number().integer().min(1),
   quantityReduction: Joi.number().integer().min(1),
 
-  futureBookingCutOffDate: Joi.date().allow(null),
+  futureBookingCutOffDate: Joi.date(),
   isFamilyMembersRequired: Joi.boolean(),
   maxFamilyMembers: Joi.number().integer().min(1),
   posAvailability: Joi.boolean(),

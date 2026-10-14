@@ -31,10 +31,9 @@ const serviceSchema = new mongoose.Schema({
   image: { type: String, default: null }, // full Cloudinary secure_url
   // Print this record's picture under it on the ticket (also needs "Print image on ticket" = Yes in Print Split Setting).
   printImage: { type: Boolean, default: false },
-  // Session rule: a master with sessionRequired is booked for a day, today up to sessionCutoffDate (common/utils/session-rule.js).
+  // Session rule: a master with sessionRequired is booked for a day, today up to its Future Booking Cut-off Date (common/utils/session-rule.js).
   sessionRequired: { type: Boolean, default: false },
   recurringRequired: { type: Boolean, default: false },
-  sessionCutoffDate: { type: Date, default: null },
   // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
   ticketImage: { type: String, default: null },
   // Optional hex card colour ("" = use the POS default theme).
@@ -66,6 +65,9 @@ const serviceSchema = new mongoose.Schema({
   reservedStock: { type: Number, default: 0, min: 0 },
 
   bookingCutoffDate: { type: Date, default: null },
+  // Quantity a booking starts at / cannot go below, and the most that can be booked per line (0 = no limit: older records).
+  minQuantity: { type: Number, default: 1 },
+  maxQuantity: { type: Number, default: 0 },
   isPosAvailable: { type: Boolean, default: true },
   publicAvailability: { type: Boolean, default: true },
   // Independent of isPosAvailable — gates the Admin Booking Panel's own

@@ -1,3 +1,4 @@
+const { loadAlertRows, countAlerts } = require("../../common/utils/stock-alerts");
 const express = require("express");
 const authGuard = require("../../common/middleware/auth-guard");
 const adminOnly = require("../../common/middleware/admin-only");
@@ -224,17 +225,7 @@ async function overview(_req, res) {
       Customer.countDocuments(Customer.notDeletedFilter({ status: 1 })),
       Service.countDocuments(Service.notDeletedFilter({ status: 1 })),
       Item.countDocuments(Item.notDeletedFilter({ status: 1 })),
-      Item.find(
-        Item.notDeletedFilter({
-          isInventoryApplicable: true,
-          status: 1,
-          $expr: { $lt: ["$currentStock", "$threshold"] },
-        })
-      )
-        .select("name code currentStock threshold")
-        .sort({ currentStock: 1 })
-        .limit(5)
-        .lean(),
+      loadAlertRows("low").then((rows) => rows.sort((a, b) => a.availableStock - b.availableStock).slice(0, 5)),
       PosBooking.find(PosBooking.notDeletedFilter({ bookingStatus: "confirmed" }))
         .select("bookingNumber customerInfo lines grandTotal paymentStatus bookingStatus bookedAt")
         .sort({ bookedAt: -1 })
@@ -272,13 +263,7 @@ async function overview(_req, res) {
         .sort({ "cancellation.cancelledAt": -1, bookedAt: -1 })
         .limit(5)
         .lean(),
-      Item.countDocuments(
-        Item.notDeletedFilter({
-          isInventoryApplicable: true,
-          status: 1,
-          $expr: { $lt: ["$currentStock", "$threshold"] },
-        })
-      ),
+      countAlerts("low"),
     ]);
 
     const cashCollection = +(adminModesToday.cash + posModesToday.cash).toFixed(2);
@@ -335,7 +320,7 @@ async function overview(_req, res) {
             id: String(i._id),
             name: i.name,
             code: i.code,
-            currentStock: i.currentStock,
+            currentStock: i.availableStock,
             threshold: i.threshold,
           })),
           pendingCancellations: pendingCancelList.map((b) => ({

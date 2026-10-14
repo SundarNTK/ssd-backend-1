@@ -19,6 +19,7 @@
 const Event = require("../../models/events");
 const EventSeatHold = require("../../models/event-seat-holds");
 const { resolveSessionDate } = require("./session-rule");
+const { notPastCutoff } = require("./booking-cutoff");
 const { slotKeyOf, todayStart, seatsLeftOf, slotHasStarted } = require("./event-seats");
 
 /** Legacy events (saved before the General Ledger field): gstClassification -> the GST Master "type". */
@@ -43,12 +44,12 @@ function seatsFor(_event, _devotees) {
  * @param {{ portal: "pos" | "admin" }} opts
  */
 async function resolveEventLine(line, { portal }) {
-  const filter = Event.notDeletedFilter({ _id: line.refId, status: 1, endDate: { $gte: todayStart() } });
+  const filter = Event.notDeletedFilter({ _id: line.refId, status: 1, endDate: { $gte: todayStart() }, $and: [notPastCutoff("futureBookingCutOffDate")] });
   if (portal === "admin") filter.adminBookingVisibility = { $ne: false };
   else filter.posVisibility = true;
 
   const event = await Event.findOne(filter).select(
-    "name code salePrice gstClassification generalLedger deityMapping isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers sessionRequired sessionCutoffDate"
+    "name code salePrice gstClassification generalLedger deityMapping isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers sessionRequired futureBookingCutOffDate"
   ).populate("generalLedger", "gstType");
   if (!event) throw "An event in the cart is no longer available.";
 

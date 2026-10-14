@@ -81,6 +81,8 @@ const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { notPastCutoff } = require("../../common/utils/booking-cutoff");
+const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
 const { slotHasStarted } = require("../../common/utils/event-seats");
 const { holdSeats, refreshHolds, releaseHoldRoute, releaseOrphanHolds } = require("./event-holds");
@@ -500,7 +502,7 @@ async function listPosItems(req, res) {
     const categoryVisField = isAdmin ? "adminBookingVisibility" : "posVisibility";
     const { categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
 
-    const and = [posHierarchyClause(categoryIds, subCategoryIds)];
+    const and = [posHierarchyClause(categoryIds, subCategoryIds), notPastCutoff("futureBookingCutOffDate")];
     const filter = Item.notDeletedFilter({ status: 1, [visField]: true });
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -535,7 +537,7 @@ async function listPosItems(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired sessionCutoffDate")
+        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -564,7 +566,7 @@ async function listPosServices(req, res) {
     const categoryVisField = isAdmin ? "adminBookingVisibility" : "posVisibility";
     const { categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
 
-    const and = [posHierarchyClause(categoryIds, subCategoryIds)];
+    const and = [posHierarchyClause(categoryIds, subCategoryIds), notPastCutoff("bookingCutoffDate")];
     const filter = Service.notDeletedFilter({ status: 1, [visField]: true });
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -597,7 +599,7 @@ async function listPosServices(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired recurringRequired sessionCutoffDate")
+        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -630,7 +632,7 @@ async function listPosEvents(req, res) {
     const sgToday = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const todayStart = new Date(`${sgToday}T00:00:00.000Z`);
 
-    const filter = Event.notDeletedFilter({ status: 1, endDate: { $gte: todayStart } });
+    const filter = Event.notDeletedFilter({ status: 1, endDate: { $gte: todayStart }, $and: [notPastCutoff("futureBookingCutOffDate")] });
     if (isAdmin) filter.adminBookingVisibility = { $ne: false };
     else filter.posVisibility = true;
 
@@ -638,7 +640,7 @@ async function listPosEvents(req, res) {
       .populate({ path: "category", select: "name color" })
       .populate({ path: "deityMapping", select: "name tamilName image color", options: { sort: { displayOrder: 1, name: 1 } } })
       .select(
-        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions sessionRequired recurringRequired sessionCutoffDate"
+        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
       )
       .sort({ startDate: 1, displayOrder: 1, name: 1 })
       .lean();
@@ -648,6 +650,8 @@ async function listPosEvents(req, res) {
     const items = events
       .map((e) => ({
         ...e,
+        // The booking screens read the session's last day as `sessionCutoffDate`.
+        sessionCutoffDate: e.futureBookingCutOffDate ?? null,
         slotDetails: (e.slotDetails || [])
           .filter((slot) => slot.status === 1 && !slotHasStarted(slot))
           .sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.startTime).localeCompare(String(b.startTime))),
@@ -704,7 +708,7 @@ async function listGeneralItems(req, res) {
       GeneralItem.find(filter)
         .populate({ path: "categoryDetails.category", select: "name color", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
         .populate({ path: "categoryDetails.subCategory", select: "name", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
-        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired sessionCutoffDate")
+        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -747,7 +751,7 @@ async function decorateItems(items) {
     categoryDetails: item.categoryDetails,
     sessionRequired: Boolean(item.sessionRequired),
     recurringRequired: Boolean(item.recurringRequired),
-    sessionCutoffDate: item.sessionCutoffDate || null,
+    sessionCutoffDate: item.futureBookingCutOffDate || null,
     favorite: Boolean(item.favorite),
     inventory: availByRefId.get(String(item._id)),
   }));
@@ -768,9 +772,11 @@ async function decorateServices(services) {
     deityMapping: svc.deityMapping,
     isFamilyMembersRequired: svc.isFamilyMembersRequired,
     maxFamilyMembers: svc.maxFamilyMembers,
+    minQuantity: svc.minQuantity,
+    maxQuantity: svc.maxQuantity,
     sessionRequired: Boolean(svc.sessionRequired),
     recurringRequired: Boolean(svc.recurringRequired),
-    sessionCutoffDate: svc.sessionCutoffDate || null,
+    sessionCutoffDate: svc.bookingCutoffDate || null,
     favorite: Boolean(svc.favorite),
     inventory: availByRefId.get(String(svc._id)),
   }));
@@ -874,8 +880,8 @@ async function getCatalogue(req, res) {
     const { categories, subCategories, categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
     const visible = posHierarchyClause(categoryIds, subCategoryIds);
     const [items, services, generalItems] = await Promise.all([
-      Item.find(Item.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
-      Service.find(Service.notDeletedFilter({ status: 1, ...serviceVis, $and: [visible] })).select("categoryDetails"),
+      Item.find(Item.notDeletedFilter({ status: 1, ...itemVis, $and: [visible, notPastCutoff("futureBookingCutOffDate")] })).select("categoryDetails"),
+      Service.find(Service.notDeletedFilter({ status: 1, ...serviceVis, $and: [visible, notPastCutoff("bookingCutoffDate")] })).select("categoryDetails"),
       GeneralItem.find(GeneralItem.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
     ]);
     const subCategoryById = new Map(subCategories.map((s) => [String(s._id), s]));
@@ -1004,25 +1010,25 @@ async function getCatalogue(req, res) {
     const [uncategorizedItemsRaw, uncategorizedServicesRaw] = await Promise.all([
       allUncategorizedItemIds.length
         ? decorateItems(
-            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, ...itemVis }))
+            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, ...itemVis, $and: [notPastCutoff("futureBookingCutOffDate")] }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired sessionCutoffDate"
+                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
               )
           )
         : [],
       allUncategorizedServiceIds.length
         ? decorateServices(
-            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, ...serviceVis }))
+            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, ...serviceVis, $and: [notPastCutoff("bookingCutoffDate")] }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired recurringRequired sessionCutoffDate"
+                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
               )
           )
         : [],
@@ -1125,6 +1131,7 @@ async function bookingSummary(req, res) {
 
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let quantityLimits = null;
       // Event lines resolve through one shared helper — see common/utils/event-line.js.
       let eventParts = null;
 
@@ -1135,7 +1142,7 @@ async function bookingSummary(req, res) {
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
-          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!item || !offeringInPosHierarchy(item, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `Item not found or not available.`;
@@ -1143,13 +1150,14 @@ async function bookingSummary(req, res) {
 
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
         generalLedgerId = item.generalLedger?._id ?? null;
       } else if (refType === "Service") {
         const svc = await Service.findOne(
-          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true })
+          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true, $and: [notPastCutoff("bookingCutoffDate")] })
         ).populate("generalLedger", "gstType");
         if (!svc || !offeringInPosHierarchy(svc, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `Service not found or not available.`;
@@ -1157,13 +1165,14 @@ async function bookingSummary(req, res) {
 
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
         generalLedgerId = svc.generalLedger?._id ?? null;
       } else {
         const gi = await GeneralItem.findOne(
-          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!gi || !offeringInPosHierarchy(gi, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `Product not found or not available.`;
@@ -1197,6 +1206,7 @@ async function bookingSummary(req, res) {
       // Deity-mapped lines price (and reserve) per selected deity, not per
       // the raw `quantity` the client sent — see effectiveQuantity().
       const qty = effectiveQuantity(line);
+      assertQuantityLimits(quantityLimits, qty);
       // Master prices (Item.salePrice / Service.categoryDetails.salePrice)
       // are the GST-inclusive counter price the devotee actually pays — GST
       // is extracted out of it, independently per line, via
@@ -1325,7 +1335,7 @@ async function recheckLines(req, res) {
           return { ...base, available: false, reason: "Event bookings cannot be repeated — add the event again from the Events tab." };
         }
         if (refType === "Item") {
-          const item = await Item.findOne(Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })).populate({
+          const item = await Item.findOne(Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })).populate({
             path: "deityMapping",
             select: "name tamilName color",
             options: { sort: { displayOrder: 1, name: 1 } },
@@ -1346,7 +1356,7 @@ async function recheckLines(req, res) {
             maxFamilyMembers: item.maxFamilyMembers,
           };
         } else if (refType === "Service") {
-          const svc = await Service.findOne(Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true })).populate({
+          const svc = await Service.findOne(Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true, $and: [notPastCutoff("bookingCutoffDate")] })).populate({
             path: "deityMapping",
             select: "name tamilName color",
             options: { sort: { displayOrder: 1, name: 1 } },
@@ -1367,7 +1377,7 @@ async function recheckLines(req, res) {
             maxFamilyMembers: svc.maxFamilyMembers,
           };
         } else {
-          const gi = await GeneralItem.findOne(GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true }));
+          const gi = await GeneralItem.findOne(GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] }));
           if (!gi || !offeringInPosHierarchy(gi, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
             return { ...base, available: false, reason: "No longer available for sale." };
           }
@@ -1473,6 +1483,7 @@ async function createOrder(req, res) {
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let quantityLimits = null;
       let eventParts = null;
 
       if (refType === "Event") {
@@ -1482,33 +1493,35 @@ async function createOrder(req, res) {
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
-          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!item || !offeringInPosHierarchy(item, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `An item in the cart is no longer available.`;
         }
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
         generalLedgerId = item.generalLedger?._id ?? null;
       } else if (refType === "Service") {
         const svc = await Service.findOne(
-          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true })
+          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true, $and: [notPastCutoff("bookingCutoffDate")] })
         ).populate("generalLedger", "gstType");
         if (!svc || !offeringInPosHierarchy(svc, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A service in the cart is no longer available.`;
         }
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
         generalLedgerId = svc.generalLedger?._id ?? null;
       } else {
         const gi = await GeneralItem.findOne(
-          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!gi || !offeringInPosHierarchy(gi, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A product in the cart is no longer available.`;
@@ -1527,6 +1540,7 @@ async function createOrder(req, res) {
       // Order's stored line quantity, so the fix here also covers the
       // reservation and stock-out steps below without touching them.
       const qty = effectiveQuantity(line);
+      assertQuantityLimits(quantityLimits, qty);
       // Same GST-extraction math as bookingSummary — see the comment there.
       rawLines.push({
         refType,

@@ -64,7 +64,6 @@ const createSchema = Joi.object({
   printImage: Joi.boolean().default(false),
   sessionRequired: Joi.boolean().default(false),
   recurringRequired: Joi.boolean().default(false),
-  sessionCutoffDate: Joi.date().allow("", null).default(null),
   ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
 
@@ -80,12 +79,14 @@ const createSchema = Joi.object({
   isFamilyMembersRequired: Joi.boolean().default(false),
   maxFamilyMembers: Joi.number().integer().min(1).default(2),
 
-  sessionRequired: Joi.any().strip(), // removed field - an older client may still send it
 
   isInventoryRequired: Joi.boolean().default(false),
   thresholdCount: Joi.number().integer().min(0).default(0),
 
-  bookingCutoffDate: Joi.date().allow(null).default(null),
+  // Mandatory: the last day this service can be booked (it is hidden from booking afterwards).
+  bookingCutoffDate: Joi.date().required(),
+  minQuantity: Joi.number().integer().min(1).required(),
+  maxQuantity: Joi.number().integer().min(Joi.ref("minQuantity")).required().messages({ "number.min": "Max Quantity cannot be less than Min Quantity." }),
   isPosAvailable: Joi.boolean().default(true),
   publicAvailability: Joi.boolean().default(true),
   adminBookingVisibility: Joi.boolean().default(true),
@@ -103,7 +104,6 @@ const updateSchema = Joi.object({
   printImage: Joi.boolean(),
   sessionRequired: Joi.boolean(),
   recurringRequired: Joi.boolean(),
-  sessionCutoffDate: Joi.date().allow("", null),
   ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
 
@@ -119,12 +119,13 @@ const updateSchema = Joi.object({
   isFamilyMembersRequired: Joi.boolean(),
   maxFamilyMembers: Joi.number().integer().min(1),
 
-  sessionRequired: Joi.any().strip(), // removed field - an older client may still send it
 
   isInventoryRequired: Joi.boolean(),
   thresholdCount: Joi.number().integer().min(0),
 
-  bookingCutoffDate: Joi.date().allow(null),
+  bookingCutoffDate: Joi.date(),
+  minQuantity: Joi.number().integer().min(1),
+  maxQuantity: Joi.number().integer().min(1),
   isPosAvailable: Joi.boolean(),
   publicAvailability: Joi.boolean(),
   adminBookingVisibility: Joi.boolean(),

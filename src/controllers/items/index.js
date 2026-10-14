@@ -40,7 +40,7 @@ router.post(
   hydrateMultipartBody,
   validateBody(createSchema),
   requireTicketImage(Item),
-  requireSessionCutoff(Item),
+  requireSessionCutoff(Item, "futureBookingCutOffDate"),
   crud.create
 );
 router.put(

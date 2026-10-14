@@ -2,10 +2,12 @@
  * Session rule for Item / Service / Event masters.
  *
  * A master with `sessionRequired` is booked for one DAY (the session date): by default today, or any later day
- * up to and including its `sessionCutoffDate`. Once the cut-off day has passed the session is over and the
+ * up to and including its Future Booking Cut-off Date. Once the cut-off day has passed the session is over and the
  * offering can no longer be booked. Dates are Singapore calendar days ("YYYY-MM-DD"). `recurringRequired` is
  * only a flag on the master for now - it does not change booking.
  */
+const { cutoffOf } = require("./booking-cutoff");
+
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Today in Singapore as "YYYY-MM-DD". */
@@ -27,7 +29,7 @@ function dayOf(date) {
 function resolveSessionDate(master, line, now = Date.now()) {
   if (!master || master.sessionRequired !== true) return null;
   const today = templeToday(now);
-  const cutoff = dayOf(master.sessionCutoffDate);
+  const cutoff = dayOf(cutoffOf(master));
   if (cutoff && cutoff < today) throw `The session has ended for "${master.name}".`;
 
   const chosen = line?.sessionDate ? String(line.sessionDate).slice(0, 10) : today;

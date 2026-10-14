@@ -51,6 +51,8 @@ const GeneralItem = require("../../models/general-items");
 const Event = require("../../models/events");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { notPastCutoff } = require("../../common/utils/booking-cutoff");
+const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
 const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
@@ -186,6 +188,7 @@ async function createOrder(req, res) {
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let quantityLimits = null;
       let eventParts = null;
 
       if (refType === "Event") {
@@ -195,33 +198,35 @@ async function createOrder(req, res) {
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
-          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!item || !offeringInPosHierarchy(item, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `An item in the cart is no longer available.`;
         }
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
         generalLedgerId = item.generalLedger?._id ?? null;
       } else if (refType === "Service") {
         const svc = await Service.findOne(
-          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true })
+          Service.notDeletedFilter({ _id: refId, status: 1, [svcVisField]: true, $and: [notPastCutoff("bookingCutoffDate")] })
         ).populate("generalLedger", "gstType");
         if (!svc || !offeringInPosHierarchy(svc, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A service in the cart is no longer available.`;
         }
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
         generalLedgerId = svc.generalLedger?._id ?? null;
       } else {
         const gi = await GeneralItem.findOne(
-          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
+          GeneralItem.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true, $and: [notPastCutoff("futureBookingCutOffDate")] })
         ).populate("generalLedger", "gstType");
         if (!gi || !offeringInPosHierarchy(gi, hierarchy.categoryIds, hierarchy.subCategoryIds)) {
           throw `A product in the cart is no longer available.`;
@@ -237,6 +242,7 @@ async function createOrder(req, res) {
 
       const gstRate = await resolveGstRate(gstType);
       const qty = effectiveQuantity(line);
+      assertQuantityLimits(quantityLimits, qty);
 
       // unitPrice is the GST-inclusive counter price shown in the cart —
       // GST is extracted out of it, never added on top. Each line's own

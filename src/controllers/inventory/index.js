@@ -5,6 +5,7 @@ const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
 const escapeRegex = require("../../common/utils/escape-regex");
+const { loadAlertRows } = require("../../common/utils/stock-alerts");
 
 const Item = require("../../models/items");
 const Service = require("../../models/services");
@@ -133,39 +134,21 @@ async function availableStock(req, res) {
 
 /**
  * GET /inventory/low-stock
- * Only Item carries a unit of measure, so — matching the reference
- * report — this is Item-only; Service has no UOM to show alongside a
- * stock level. Lists items that still have some stock but are under their
- * threshold; items at zero are on GET /inventory/out-of-stock instead.
+ * Items, Services and General Items that have a threshold and whose AVAILABLE stock (in stock minus reserved) has
+ * reached it or dropped below it, but is not yet zero (zero belongs on /inventory/out-of-stock, so the two lists
+ * never overlap). See common/utils/stock-alerts.
  */
 async function lowStock(req, res) {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
+    const search = req.query.search ? searchRegex(req.query.search) : null;
+    const type = ["Item", "Service", "GeneralItem"].includes(req.query.type) ? req.query.type : null;
 
-    const filter = Item.notDeletedFilter({
-      isInventoryApplicable: true,
-      status: 1,
-      // Strictly above zero — a zero-stock item belongs on the Out of Stock
-      // tab (see outOfStock below), so the two lists never overlap.
-      currentStock: { $gt: 0 },
-      $expr: { $lt: ["$currentStock", "$threshold"] },
-    });
-    if (req.query.search) {
-      const regex = searchRegex(req.query.search);
-      filter.$or = [{ name: regex }, { code: regex }];
-    }
-
-    const [items, total] = await Promise.all([
-      Item.find(filter)
-        .select("name code currentStock threshold unitOfMeasure")
-        .sort({ name: 1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize),
-      Item.countDocuments(filter),
-    ]);
-
-    return responseHandler({ res, response: { items, total, page, pageSize } });
+    // Closest to empty first, so the most urgent rows lead.
+    const merged = (await loadAlertRows("low", { search, type })).sort((a, b) => a.availableStock - b.availableStock || a.name.localeCompare(b.name));
+    const start = (page - 1) * pageSize;
+    return responseHandler({ res, response: { items: merged.slice(start, start + pageSize), total: merged.length, page, pageSize } });
   } catch (error) {
     return exceptionHandler({ res, error });
   }
@@ -173,37 +156,18 @@ async function lowStock(req, res) {
 
 /**
  * GET /inventory/out-of-stock
- * Every inventory-tracked Item and Service whose stock has hit zero. Merged
- * in application code for the same reason as availableStock above.
+ * Every inventory-tracked Item, Service and General Item whose available stock is 0 (sold out - or all of it held
+ * by pending bookings, or never stocked). Merged in application code for the same reason as availableStock above.
  */
 async function outOfStock(req, res) {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
     const search = req.query.search ? searchRegex(req.query.search) : null;
+    const type = ["Item", "Service", "GeneralItem"].includes(req.query.type) ? req.query.type : null;
 
-    async function load(Model, refType, applicableField, thresholdKey) {
-      const filter = Model.notDeletedFilter({ [applicableField]: true, status: 1, currentStock: { $lte: 0 } });
-      if (search) filter.$or = [{ name: search }, { code: search }];
-      const rows = await Model.find(filter).select(`name code currentStock ${thresholdKey} updatedAt`).sort({ name: 1 });
-      return rows.map((r) => ({
-        _id: r._id,
-        refType,
-        name: r.name,
-        code: r.code,
-        currentStock: r.currentStock || 0,
-        threshold: r[thresholdKey] ?? 0,
-      }));
-    }
-
-    const [items, services, generalItems] = await Promise.all([
-      req.query.type && req.query.type !== "Item" ? [] : load(Item, "Item", "isInventoryApplicable", "threshold"),
-      req.query.type && req.query.type !== "Service" ? [] : load(Service, "Service", "isInventoryRequired", "thresholdCount"),
-      req.query.type && req.query.type !== "GeneralItem" ? [] : load(GeneralItem, "GeneralItem", "isInventoryApplicable", "threshold"),
-    ]);
-    const merged = [...items, ...services, ...generalItems].sort((a, b) => a.name.localeCompare(b.name));
+    const merged = (await loadAlertRows("out", { search, type })).sort((a, b) => a.name.localeCompare(b.name));
     const start = (page - 1) * pageSize;
-
     return responseHandler({ res, response: { items: merged.slice(start, start + pageSize), total: merged.length, page, pageSize } });
   } catch (error) {
     return exceptionHandler({ res, error });
