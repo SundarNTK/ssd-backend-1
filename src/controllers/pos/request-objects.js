@@ -27,6 +27,8 @@ const cartLineSchema = Joi.object({
   slotKey: Joi.string().trim().max(300).allow("", null).default(null),
   // Event lines only: the seat hold the cart took for this line.
   holdId: Joi.string().hex().length(24).allow("", null).default(null),
+  // Item/Service/Event with a session rule: the chosen day, "YYYY-MM-DD" (default today).
+  sessionDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).allow("", null).default(null),
   refId: Joi.string().hex().length(24).required(),
   quantity: Joi.number().integer().min(1).required(),
   // For services: which deity ids this line is for
@@ -127,6 +129,18 @@ const customerSearchSchema = Joi.object({
  * required-field shape (name + email required, mobile optional), so a
  * walk-in profile isn't a lesser record than one created any other way.
  */
+/**
+ * Admin Booking's first step: just a name and a Singapore mobile number (8 digits, starting with 8 or 9).
+ */
+const quickCustomerSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(150).required(),
+  mobileNumber: Joi.string().trim().pattern(/^[89]\d{7}$/).required().messages({
+    "string.pattern.base": "Enter a valid 8-digit Singapore mobile number starting with 8 or 9.",
+  }),
+  // Optional - a placeholder is stored when left empty.
+  email: Joi.string().trim().email({ tlds: false }).allow("", null).default(null),
+});
+
 const createCustomerSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150).required(),
   email: Joi.string().trim().email({ tlds: false }).required(),
@@ -175,6 +189,7 @@ module.exports = {
   confirmOrderSchema,
   customerSearchSchema,
   createCustomerSchema,
+  quickCustomerSchema,
   addFamilyMembersSchema,
   recheckLinesSchema,
   recordPaymentSchema,

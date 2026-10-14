@@ -50,6 +50,7 @@ const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
 const Event = require("../../models/events");
 const { resolveEventLine } = require("../../common/utils/event-line");
+const { resolveSessionDate } = require("../../common/utils/session-rule");
 const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
 const { PosOrder } = require("../../models/pos-orders");
@@ -183,11 +184,13 @@ async function createOrder(req, res) {
       const { refType, refId } = line;
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
+      let sessionDate = null;
       let eventParts = null;
 
       if (refType === "Event") {
         eventParts = await resolveEventLine(line, { portal });
         ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        sessionDate = eventParts.sessionDate;
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
@@ -197,6 +200,7 @@ async function createOrder(req, res) {
           throw `An item in the cart is no longer available.`;
         }
         name = item.name;
+        sessionDate = resolveSessionDate(item, line);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
@@ -209,6 +213,7 @@ async function createOrder(req, res) {
           throw `A service in the cart is no longer available.`;
         }
         name = svc.name;
+        sessionDate = resolveSessionDate(svc, line);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
@@ -254,6 +259,7 @@ async function createOrder(req, res) {
         deities,
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
+        sessionDate,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -276,6 +282,7 @@ async function createOrder(req, res) {
       deities: l.deities,
       devotees: l.devotees,
       eventSlot: l.eventSlot,
+      sessionDate: l.sessionDate ?? null,
       seats: l.seats,
       holdId: l.holdId,
     }));
@@ -316,6 +323,7 @@ async function createOrder(req, res) {
           deities: l.deities,
           devotees: l.devotees,
           eventSlot: l.eventSlot,
+      sessionDate: l.sessionDate ?? null,
           seats: l.seats,
         })),
         subtotal: +subtotal.toFixed(2),

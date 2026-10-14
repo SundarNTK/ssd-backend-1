@@ -80,6 +80,7 @@ const { Booking, BOOKING_STATUSES } = require("../../models/bookings");
 const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
+const { resolveSessionDate } = require("../../common/utils/session-rule");
 const { slotHasStarted } = require("../../common/utils/event-seats");
 const { holdSeats, refreshHolds, releaseHoldRoute, releaseOrphanHolds } = require("./event-holds");
 const PrintSplitSetting = require("../../models/print-split-settings");
@@ -101,6 +102,7 @@ const {
   confirmOrderSchema,
   customerSearchSchema,
   createCustomerSchema,
+  quickCustomerSchema,
   addFamilyMembersSchema,
   recheckLinesSchema,
   recordPaymentSchema,
@@ -284,6 +286,45 @@ async function createWalkInCustomer(req, res) {
   } catch (error) {
     if (error?.code === 11000) {
       return exceptionHandler({ res, error: "Those details are already used by another profile.", statusCode: 409 });
+    }
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
+/**
+ * POST /pos/booking/customers/quick  { name, mobileNumber }
+ * Admin Booking's first step: the person at the desk gives only a name and a Singapore mobile. A customer already
+ * on that mobile (or email) is reused as it is (never renamed); otherwise a walk-in profile is created. The email is
+ * optional: the profile needs one, so a placeholder derived from the mobile is stored when none is given.
+ */
+async function quickCustomer(req, res) {
+  try {
+    const { name, mobileNumber } = req.body;
+    const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
+
+    // A customer already on that mobile - or, failing that, on that email - is reused as it is.
+    const fields = "customerCode name email mobileNumber familyMembers maxFamilyMembers";
+    let existing = await Customer.findOne(Customer.notDeletedFilter({ mobileNumber, status: 1 })).select(fields);
+    if (!existing && email) existing = await Customer.findOne(Customer.notDeletedFilter({ email, status: 1 })).select(fields);
+    if (existing) return responseHandler({ res, response: existing });
+
+    const entityId = req.auth?.entityId || (await Entity.findOne(Entity.notDeletedFilter({ code: env.DEFAULT_ENTITY_CODE })))?._id;
+    if (!entityId) throw "No temple entity is configured.";
+
+    const customer = await createCustomerProfile({
+      entityId,
+      name,
+      email: email || `walkin.${mobileNumber}@no-email.local`,
+      mobileNumber,
+      isRegistered: false,
+    });
+    customer.createdBy = req.auth?.userId || null;
+    await customer.save();
+
+    return responseHandler({ res, response: customer, successMessage: "Customer added.", statusCode: 201 });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return exceptionHandler({ res, error: "A customer with these details already exists.", statusCode: 409 });
     }
     return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
@@ -486,7 +527,7 @@ async function listPosItems(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice isInventoryApplicable currentStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite")
+        .select("name tamilName code salePrice isInventoryApplicable currentStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired sessionCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -548,7 +589,7 @@ async function listPosServices(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite")
+        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired recurringRequired sessionCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -589,7 +630,7 @@ async function listPosEvents(req, res) {
       .populate({ path: "category", select: "name color" })
       .populate({ path: "deityMapping", select: "name tamilName image color", options: { sort: { displayOrder: 1, name: 1 } } })
       .select(
-        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions"
+        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions sessionRequired recurringRequired sessionCutoffDate"
       )
       .sort({ startDate: 1, displayOrder: 1, name: 1 })
       .lean();
@@ -655,7 +696,7 @@ async function listGeneralItems(req, res) {
       GeneralItem.find(filter)
         .populate({ path: "categoryDetails.category", select: "name color", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
         .populate({ path: "categoryDetails.subCategory", select: "name", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
-        .select("name tamilName code isInventoryApplicable currentStock threshold minQuantity maxQuantity categoryDetails image color favorite")
+        .select("name tamilName code isInventoryApplicable currentStock threshold minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired sessionCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -696,6 +737,9 @@ async function decorateItems(items) {
     minQuantity: item.minQuantity,
     maxQuantity: item.maxQuantity,
     categoryDetails: item.categoryDetails,
+    sessionRequired: Boolean(item.sessionRequired),
+    recurringRequired: Boolean(item.recurringRequired),
+    sessionCutoffDate: item.sessionCutoffDate || null,
     favorite: Boolean(item.favorite),
     inventory: availByRefId.get(String(item._id)),
   }));
@@ -716,6 +760,9 @@ async function decorateServices(services) {
     deityMapping: svc.deityMapping,
     isFamilyMembersRequired: svc.isFamilyMembersRequired,
     maxFamilyMembers: svc.maxFamilyMembers,
+    sessionRequired: Boolean(svc.sessionRequired),
+    recurringRequired: Boolean(svc.recurringRequired),
+    sessionCutoffDate: svc.sessionCutoffDate || null,
     favorite: Boolean(svc.favorite),
     inventory: availByRefId.get(String(svc._id)),
   }));
@@ -955,7 +1002,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice isInventoryApplicable currentStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color"
+                "name tamilName code salePrice isInventoryApplicable currentStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired sessionCutoffDate"
               )
           )
         : [],
@@ -967,7 +1014,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color"
+                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired recurringRequired sessionCutoffDate"
               )
           )
         : [],
@@ -1069,12 +1116,14 @@ async function bookingSummary(req, res) {
       let { deities, devotees } = line;
 
       let name, code, unitPrice, gstType, generalLedgerId;
+      let sessionDate = null;
       // Event lines resolve through one shared helper — see common/utils/event-line.js.
       let eventParts = null;
 
       if (refType === "Event") {
         eventParts = await resolveEventLine(line, { portal: isAdmin ? "admin" : "pos" });
         ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        sessionDate = eventParts.sessionDate;
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
@@ -1085,6 +1134,7 @@ async function bookingSummary(req, res) {
         }
 
         name = item.name;
+        sessionDate = resolveSessionDate(item, line);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
@@ -1098,6 +1148,7 @@ async function bookingSummary(req, res) {
         }
 
         name = svc.name;
+        sessionDate = resolveSessionDate(svc, line);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
@@ -1169,6 +1220,7 @@ async function bookingSummary(req, res) {
         availableForBooking: available,
         quantityExceedsStock: eventParts ? eventParts.seatsExceeded : avail.isInventoryApplicable && qty > avail.availableQty,
         eventSlot: eventParts?.eventSlot ?? null,
+        sessionDate,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -1195,6 +1247,7 @@ async function bookingSummary(req, res) {
       availableForBooking: l.availableForBooking,
       quantityExceedsStock: l.quantityExceedsStock,
       eventSlot: l.eventSlot,
+      sessionDate: l.sessionDate ?? null,
       seats: l.seats,
     }));
     const subtotal = gst.totalGlAmount;
@@ -1411,11 +1464,13 @@ async function createOrder(req, res) {
       const { refType, refId } = line;
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
+      let sessionDate = null;
       let eventParts = null;
 
       if (refType === "Event") {
         eventParts = await resolveEventLine(line, { portal: req.posPortal === "admin" ? "admin" : "pos" });
         ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        sessionDate = eventParts.sessionDate;
         generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
@@ -1425,6 +1480,7 @@ async function createOrder(req, res) {
           throw `An item in the cart is no longer available.`;
         }
         name = item.name;
+        sessionDate = resolveSessionDate(item, line);
         code = item.code;
         unitPrice = item.salePrice;
         gstType = item.generalLedger?.gstType ?? null;
@@ -1437,6 +1493,7 @@ async function createOrder(req, res) {
           throw `A service in the cart is no longer available.`;
         }
         name = svc.name;
+        sessionDate = resolveSessionDate(svc, line);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
         gstType = svc.generalLedger?.gstType ?? null;
@@ -1477,6 +1534,7 @@ async function createOrder(req, res) {
         deities,
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
+        sessionDate,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -1499,6 +1557,7 @@ async function createOrder(req, res) {
       deities: l.deities,
       devotees: l.devotees,
       eventSlot: l.eventSlot,
+      sessionDate: l.sessionDate ?? null,
       seats: l.seats,
       holdId: l.holdId,
     }));
@@ -1536,6 +1595,7 @@ async function createOrder(req, res) {
         deities: l.deities,
         devotees: l.devotees,
         eventSlot: l.eventSlot,
+      sessionDate: l.sessionDate ?? null,
         seats: l.seats,
       })),
       subtotal: +subtotal.toFixed(2),
@@ -2327,6 +2387,7 @@ function registerCatalogueRoutes(r) {
   r.get("/customers/lookup",    requirePermission("admin-booking", "view"),       lookupCustomerByMobile);
   r.get("/customers/self",      requirePermission("admin-booking", "view"),       getSelfCustomer);
   r.post("/customers",          requirePermission("admin-booking", "fullAccess"), validateBody(createCustomerSchema), createWalkInCustomer);
+  r.post("/customers/quick",    requirePermission("admin-booking", "fullAccess"), validateBody(quickCustomerSchema),  quickCustomer);
   r.patch("/customers/:id/family-members", requirePermission("admin-booking", "fullAccess"), validateBody(addFamilyMembersSchema), addFamilyMembers);
   r.get("/customers/:id/recent-bookings", requirePermission("admin-booking", "view"), getRecentBookings);
   r.get("/items",               requirePermission("admin-booking", "view"),       listPosItems);

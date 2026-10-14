@@ -52,6 +52,8 @@ const posOrderLineSchema = new mongoose.Schema(
     // its seats this line takes (see common/utils/event-line.js). Null / 1
     // for Item, Service and General Item lines.
     eventSlot: { type: eventSlotSchema, default: null },
+    // Item/Service/Event with a session rule: the day ("YYYY-MM-DD") it was booked for. Null otherwise.
+    sessionDate: { type: String, default: null },
     seats: { type: Number, default: 1, min: 1 },
   },
   { _id: false }

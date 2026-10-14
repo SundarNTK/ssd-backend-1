@@ -148,6 +148,7 @@ userSchema.methods.toSessionUser = function toSessionUser() {
     uCode: this.uCode,
     name: this.name,
     email: this.email,
+    mobileNumber: this.mobileNumber,
     userType: this.userType,
     profileImage: this.profileImage,
     posAccess: this.posAccess,

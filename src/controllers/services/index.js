@@ -1,5 +1,6 @@
 const express = require("express");
 const requireTicketImage = require("../../common/middleware/require-ticket-image");
+const requireSessionCutoff = require("../../common/middleware/require-session-cutoff");
 const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadServiceImage, hydrateMultipartBody } = require("../../common/middleware/upload");
@@ -39,6 +40,7 @@ router.post(
   hydrateMultipartBody,
   validateBody(createSchema),
   requireTicketImage(Service),
+  requireSessionCutoff(Service),
   crud.create
 );
 router.put(
@@ -48,6 +50,7 @@ router.put(
   hydrateMultipartBody,
   validateBody(updateSchema),
   requireTicketImage(Service),
+  requireSessionCutoff(Service),
   crud.update
 );
 router.delete("/services/:id", requirePermission("services", "fullAccess"), crud.remove);

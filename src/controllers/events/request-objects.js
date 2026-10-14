@@ -23,6 +23,9 @@ const createSchema = Joi.object({
   description: Joi.string().allow("").default(""),
   image: Joi.string().allow("", null).default(null),
   printImage: Joi.boolean().default(false),
+  sessionRequired: Joi.boolean().default(false),
+  recurringRequired: Joi.boolean().default(false),
+  sessionCutoffDate: Joi.date().allow("", null).default(null),
   ticketImage: Joi.string().allow("", null).default(null),
   sliderImage: Joi.string().allow("", null).default(null),
 
@@ -61,6 +64,9 @@ const updateSchema = Joi.object({
   description: Joi.string().allow(""),
   image: Joi.string().allow("", null),
   printImage: Joi.boolean(),
+  sessionRequired: Joi.boolean(),
+  recurringRequired: Joi.boolean(),
+  sessionCutoffDate: Joi.date().allow("", null),
   ticketImage: Joi.string().allow("", null),
   sliderImage: Joi.string().allow("", null),
 
