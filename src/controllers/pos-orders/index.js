@@ -51,6 +51,7 @@ const GeneralItem = require("../../models/general-items");
 const Event = require("../../models/events");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { customerDetailsFor } = require("../../common/utils/customer-details");
 const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
 const { PosOrder } = require("../../models/pos-orders");
@@ -161,7 +162,7 @@ async function createOrder(req, res) {
     const { error, value } = createOrderSchema.validate(req.body);
     if (error) throw error.details[0].message;
 
-    const { customerId, lines, paymentModeId, paidAmount } = value;
+    const { customerId, lines, paymentModeId, paidAmount, customerDetails } = value;
     const portal = req.posPortal === "admin" ? "admin" : "pos";
     const itemVisField = portal === "admin" ? "adminBookingVisibility" : "posAvailability";
     const svcVisField = portal === "admin" ? "adminBookingVisibility" : "isPosAvailable";
@@ -307,6 +308,7 @@ async function createOrder(req, res) {
         referenceId,
         orderNumber,
         customer: customerId,
+        customerDetails: customerDetailsFor(customer, customerDetails),
         lines: resolvedLines.map((l) => ({
           refType: l.refType,
           refId: l.refId,
@@ -450,6 +452,7 @@ async function writePosBookingFromOrder(order, paidAmount, paymentOverride = {})
       bookingNumber,
       orderId: order._id,
       customer: customerId,
+      customerDetails: order.customerDetails ?? customerDetailsFor(order.customer, null),
       lines: order.lines,
       subtotal: order.subtotal,
       gstAmount: order.gstAmount,
@@ -694,7 +697,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber referenceId")
         .select(
-          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
+          "bookingNumber orderId customer customerDetails lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         // listWindow lets the Admin Panel's merged ledger ask for an exact slice.
@@ -738,6 +741,10 @@ async function listBookings(req, res) {
         customer: b.customer
           ? { _id: b.customer._id, customerCode: b.customer.customerCode, name: b.customer.name }
           : null,
+        // As typed at the desk when it was booked (name / mobile / email) - see the booking's customerDetails.
+        customerDetails: b.customerDetails ?? null,
+        // The session day(s) the booking was made for (items/services/events with a session rule).
+        sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
         lineType: deriveLineType(b.lines),
         paymentModeName: b.paymentModeName,
         paymentModeNames: paidModeNames.length ? paidModeNames : [b.paymentModeName],

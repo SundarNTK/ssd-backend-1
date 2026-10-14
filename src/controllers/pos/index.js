@@ -81,6 +81,7 @@ const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { customerDetailsFor } = require("../../common/utils/customer-details");
 const { slotHasStarted } = require("../../common/utils/event-seats");
 const { holdSeats, refreshHolds, releaseHoldRoute, releaseOrphanHolds } = require("./event-holds");
 const PrintSplitSetting = require("../../models/print-split-settings");
@@ -306,7 +307,14 @@ async function quickCustomer(req, res) {
     const fields = "customerCode name email mobileNumber familyMembers maxFamilyMembers";
     let existing = await Customer.findOne(Customer.notDeletedFilter({ mobileNumber, status: 1 })).select(fields);
     if (!existing && email) existing = await Customer.findOne(Customer.notDeletedFilter({ email, status: 1 })).select(fields);
-    if (existing) return responseHandler({ res, response: existing });
+    if (existing) {
+      // Found by email with no mobile on file yet (e.g. a staff member's own profile): remember the mobile just given.
+      if (!existing.mobileNumber) {
+        existing.mobileNumber = mobileNumber;
+        await existing.save();
+      }
+      return responseHandler({ res, response: existing });
+    }
 
     const entityId = req.auth?.entityId || (await Entity.findOne(Entity.notDeletedFilter({ code: env.DEFAULT_ENTITY_CODE })))?._id;
     if (!entityId) throw "No temple entity is configured.";
@@ -1579,6 +1587,7 @@ async function createOrder(req, res) {
     const order = await Order.create({
       orderNumber,
       customer: customerId,
+      customerDetails: customerDetailsFor(customer, value.customerDetails),
       lines: resolvedLines.map((l) => ({
         refType: l.refType,
         refId: l.refId,
@@ -1727,6 +1736,7 @@ async function writeBookingFromOrder(order, paidAmount) {
       bookingNumber,
       orderId: order._id,
       customer: customerId,
+      customerDetails: order.customerDetails ?? customerDetailsFor(order.customer, null),
       lines: order.lines,
       subtotal: order.subtotal,
       gstAmount: order.gstAmount,
@@ -1995,7 +2005,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber")
         .select(
-          "bookingNumber orderId customer lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
+          "bookingNumber orderId customer customerDetails lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         .skip(req.listWindow?.skip ?? (page - 1) * pageSize)
@@ -2034,6 +2044,10 @@ async function listBookings(req, res) {
         customer: b.customer
           ? { _id: b.customer._id, customerCode: b.customer.customerCode, name: b.customer.name }
           : null,
+        // As typed at the desk when it was booked (name / mobile / email) - see the booking's customerDetails.
+        customerDetails: b.customerDetails ?? null,
+        // The session day(s) the booking was made for (items/services/events with a session rule).
+        sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
         lineType: deriveLineType(b.lines),
         paymentModeName: b.paymentModeName,
         subtotal: b.subtotal,

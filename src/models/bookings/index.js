@@ -66,6 +66,15 @@ const bookingSchema = new mongoose.Schema({
   bookingNumber: { type: String, required: true },
   orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+  // Who the booking was made for, exactly as entered at the desk when it was booked (name / Singapore mobile /
+  // optional email). Kept on the booking so it still reads the same if the customer profile changes later.
+  customerDetails: {
+    type: new mongoose.Schema(
+      { name: { type: String, default: "" }, mobileNumber: { type: String, default: "" }, email: { type: String, default: "" } },
+      { _id: false }
+    ),
+    default: null,
+  },
 
   lines: { type: [bookingLineSchema], default: [] },
 

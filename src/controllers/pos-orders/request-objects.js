@@ -19,6 +19,8 @@ const cartLineSchema = Joi.object({
   slotKey: Joi.string().trim().max(300).allow("", null).default(null),
   // Event lines only: the seat hold the cart took for this line.
   holdId: Joi.string().hex().length(24).allow("", null).default(null),
+  // Item/Service/Event with a session rule: the chosen day, "YYYY-MM-DD" (default today).
+  sessionDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).allow("", null).default(null),
   refId: Joi.string().hex().length(24).required(),
   quantity: Joi.number().integer().min(1).required(),
   deities: Joi.array().items(Joi.string().hex().length(24)).default([]),
@@ -48,6 +50,12 @@ const createOrderSchema = Joi.object({
   lines: Joi.array().items(cartLineSchema).min(1).required(),
   paymentModeId: Joi.string().hex().length(24).required(),
   paidAmount: paidAmountSchema,
+  // The customer details typed at the desk, stored on the booking (see models' customerDetails).
+  customerDetails: Joi.object({
+    name: Joi.string().trim().max(150).allow("").default(""),
+    mobileNumber: Joi.string().trim().max(20).allow("").default(""),
+    email: Joi.string().trim().max(200).allow("").default(""),
+  }).allow(null),
 });
 
 /**

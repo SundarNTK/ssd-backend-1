@@ -77,6 +77,12 @@ const createOrderSchema = Joi.object({
   lines: Joi.array().items(cartLineSchema).min(1).required(),
   paymentModeId: Joi.string().hex().length(24).required(),
   paidAmount: paidAmountSchema,
+  // The customer details typed at the desk, stored on the booking (see models' customerDetails).
+  customerDetails: Joi.object({
+    name: Joi.string().trim().max(150).allow("").default(""),
+    mobileNumber: Joi.string().trim().max(20).allow("").default(""),
+    email: Joi.string().trim().max(200).allow("").default(""),
+  }).allow(null),
 });
 
 /**

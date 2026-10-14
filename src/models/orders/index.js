@@ -76,6 +76,15 @@ const PORTAL_TYPES = ["admin", "pos", "customer"];
 const orderSchema = new mongoose.Schema({
   orderNumber: { type: String, required: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+  // Who the booking was made for, exactly as entered at the desk when it was booked (name / Singapore mobile /
+  // optional email). Kept on the booking so it still reads the same if the customer profile changes later.
+  customerDetails: {
+    type: new mongoose.Schema(
+      { name: { type: String, default: "" }, mobileNumber: { type: String, default: "" }, email: { type: String, default: "" } },
+      { _id: false }
+    ),
+    default: null,
+  },
 
   lines: { type: [orderLineSchema], default: [] },
 
