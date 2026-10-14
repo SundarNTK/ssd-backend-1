@@ -7,7 +7,10 @@
  *   physical  = currentStock                  units on the shelf - moved ONLY by adjustments and by a confirmed booking
  *   reserved  = reservedStock                 units held by pending bookings (open reservations)
  *   available = physical - reserved           what a manual stock-out may take
- *   bookable  = physical - reserved - threshold   what a new booking may reserve (threshold is the safety buffer)
+ *   bookable  = physical - reserved          what a new booking may reserve (same as available)
+ *
+ * The master's threshold is only the low-stock ALERT level (see common/utils/stock-alerts): stock stays sellable
+ * right down to zero.
  *
  * Every change to those counters is ONE conditional update whose filter carries the rule it enforces (enough
  * available stock, never below zero), so two requests racing for the same stock cannot both win. Multi-step changes
@@ -74,7 +77,7 @@ async function runInTransaction(fn) {
 function reserveStock(refType, refId, qty, { session } = {}) {
   const Model = REF_MODELS[refType];
   return Model.findOneAndUpdate(
-    { ...trackedFilter(Model, refType, refId), $expr: { $gte: [freeExpr(refType, { withThreshold: true }), qty] } },
+    { ...trackedFilter(Model, refType, refId), $expr: { $gte: [freeExpr(refType, { withThreshold: false }), qty] } },
     { $inc: { reservedStock: qty } },
     { returnDocument: "after", session }
   );

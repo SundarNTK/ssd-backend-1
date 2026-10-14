@@ -6,7 +6,7 @@
  *
  *   physical  = currentStock         moved only by manual adjustments and by a CONFIRMED booking
  *   reserved  = reservedStock        units held by pending bookings
- *   bookable  = physical - reserved - threshold      (threshold = the master's safety buffer)
+ *   bookable  = physical - reserved      (the threshold is only the low-stock alert level; it never blocks a sale)
  *
  * Lifecycle of one inventory line (an InventoryReservation row, status in brackets):
  *
@@ -53,12 +53,11 @@ const RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 function shortageMessage(ref, refType) {
   const currentStock = ref.currentStock ?? 0;
   const reserved = ref.reservedStock ?? 0;
-  const threshold = ref[thresholdField(refType)] ?? 0;
   if (currentStock <= 0 && reserved <= 0) {
     return `Inventory has not been initialized for "${ref.name}": no stock has been added yet. Add stock in Inventory Adjustment before booking it.`;
   }
-  const bookable = Math.max(0, currentStock - reserved - threshold);
-  return `Insufficient stock for "${ref.name}": only ${bookable} unit(s) available for booking (${currentStock} in stock, ${reserved} reserved by other bookings, ${threshold} safety buffer).`;
+  const bookable = Math.max(0, currentStock - reserved);
+  return `Insufficient stock for "${ref.name}": only ${bookable} unit(s) available for booking (${currentStock} in stock, ${reserved} reserved by other bookings).`;
 }
 
 /**
@@ -409,7 +408,7 @@ async function reconcileReservedStock() {
 
 /**
  * What can be booked right now for one master, WITHOUT writing anything. `availableQty` is what a new booking may
- * still reserve (physical - reserved - threshold).
+ * still reserve (physical - reserved).
  */
 async function getAvailability(refType, refId) {
   const Model = REF_MODELS[refType];
@@ -428,7 +427,7 @@ async function getAvailability(refType, refId) {
     isInventoryApplicable: true,
     currentStock,
     reservedQty,
-    availableQty: Math.max(0, currentStock - reservedQty - threshold),
+    availableQty: Math.max(0, currentStock - reservedQty),
     threshold,
   };
 }
@@ -456,7 +455,7 @@ async function getAvailabilityBatch(refType, refs) {
       isInventoryApplicable: true,
       currentStock,
       reservedQty,
-      availableQty: Math.max(0, currentStock - reservedQty - threshold),
+      availableQty: Math.max(0, currentStock - reservedQty),
       threshold,
     });
   }
