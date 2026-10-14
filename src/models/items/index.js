@@ -57,6 +57,9 @@ const itemSchema = new mongoose.Schema({
   // (models/inventory-adjustments), never edited directly through the Item
   // master form.
   currentStock: { type: Number, default: 0, min: 0 },
+  // Units held by pending bookings (open reservations). Moved only by the atomic reserve/release/consume helpers in
+  // common/utils/inventory-stock.js. Available to book = currentStock - reservedStock - threshold.
+  reservedStock: { type: Number, default: 0, min: 0 },
 
   futureBookingCutOffDate: { type: Date, default: null },
   isFamilyMembersRequired: { type: Boolean, default: false },

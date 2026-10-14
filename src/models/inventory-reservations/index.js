@@ -28,6 +28,11 @@ const mongoose = require("mongoose");
 const inventoryReservationSchema = new mongoose.Schema(
   {
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true },
+    // Position of the line in the order, so confirming an order finds exactly this line's hold.
+    lineKey: { type: Number, default: null },
+    // The payment correlation id / booking this hold ended up on, once known.
+    referenceId: { type: String, default: null },
+    bookingNumber: { type: String, default: null },
     refType: { type: String, enum: ["Item", "Service", "GeneralItem"], required: true },
     refId: { type: mongoose.Schema.Types.ObjectId, required: true },
     quantity: { type: Number, required: true, min: 1 },
@@ -42,6 +47,13 @@ const inventoryReservationSchema = new mongoose.Schema(
     },
     expiresAt: { type: Date, required: true },
     releasedAt: { type: Date, default: null },
+    // Why a hold ended without being consumed ("reservation expired after 30 minutes", "payment cancelled", ...).
+    releaseReason: { type: String, default: null },
+    // When payment confirmed it (status "consumed"), and whether that happened AFTER the hold had already lapsed.
+    confirmedAt: { type: Date, default: null },
+    lateConfirmation: { type: Boolean, default: false },
+    // Units a late confirmation could not deduct because the stock was gone (see consumeReservations).
+    shortfallQty: { type: Number, default: 0 },
   },
   { timestamps: true, versionKey: false }
 );
@@ -52,5 +64,7 @@ inventoryReservationSchema.index({ refType: 1, refId: 1, status: 1 });
 inventoryReservationSchema.index({ status: 1, expiresAt: 1 });
 // Order cancellation: find all reservations for a given order
 inventoryReservationSchema.index({ orderId: 1, status: 1 });
+// One hold per order line - a retried order write can never double-hold the same line.
+inventoryReservationSchema.index({ orderId: 1, lineKey: 1 }, { unique: true, partialFilterExpression: { lineKey: { $type: "number" } } });
 
 module.exports = mongoose.model("InventoryReservation", inventoryReservationSchema);

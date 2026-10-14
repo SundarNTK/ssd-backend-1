@@ -1,46 +1,33 @@
 /**
- * Inventory Reservation helpers — the atomic mechanics of placing and
- * releasing temporary stock holds during the Admin Booking flow.
+ * Inventory Reservation helpers - the booking side of the stock lifecycle, shared by the POS counter and the
+ * Admin Booking page.
  *
- * Design decisions:
+ * Accounting model (one, used everywhere - see common/utils/inventory-stock.js):
  *
- * 1. The "available quantity" a new cart line can claim is:
+ *   physical  = currentStock         moved only by manual adjustments and by a CONFIRMED booking
+ *   reserved  = reservedStock        units held by pending bookings
+ *   bookable  = physical - reserved - threshold      (threshold = the master's safety buffer)
  *
- *      available = currentStock
- *                - SUM(active reservation quantities for this ref)
+ * Lifecycle of one inventory line (an InventoryReservation row, status in brackets):
  *
- *    We never read a projected "net stock" column — it doesn't exist.
- *    We compute it here from two indexed queries, both cheap for the
- *    realistic catalogue size of a temple (tens to low hundreds of items).
+ *   order created      reserveStock(): ONE conditional update takes the units into reservedStock only if they are
+ *                      bookable, then the row is written [active, expiresAt = now + 30 min]. Two bookings racing for
+ *                      the last units cannot both win.
+ *   payment confirmed  consumeReservations(): the row is CLAIMED [active -> consumed] with a conditional update, then
+ *                      the units leave physical stock and the reservation, and a "Stock Out" movement is logged - in
+ *                      one transaction. A repeated confirmation finds the row already consumed and does nothing; the
+ *                      movement's unique requestId is a second guard.
+ *   cancelled / failed releaseReservation(): claims the row [active -> cancelled] then returns the units.
+ *   30 min, unpaid     the expiry job does the same claim [active -> expired]. Claiming first makes the job, a late
+ *                      callback and a second job run safe against each other: only the winner returns the units.
+ *   paid AFTER expiry  consumeReservations() re-takes only what is genuinely free; whatever is gone is recorded as an
+ *                      inventoryShortfall on the booking for manual follow-up - stock is never oversold.
  *
- * 2. The threshold acts as a permanent safety buffer, not a hard floor for
- *    individual reservations. The rule is:
- *
- *      max_reservable = currentStock - threshold
- *
- *    so if stock = 30 and threshold = 2, at most 28 units may be held at
- *    once across ALL active reservations. A single user asking for more than
- *    (max_reservable - already_reserved) is refused.
- *
- * 3. No MongoDB transactions are used here (no replica-set requirement).
- *    The write ordering is:
- *      a. Re-read currentStock and sum active reservations (both indexed).
- *      b. Write the InventoryReservation document.
- *      c. If (b) fails mid-flight, no stock was touched — safe.
- *    A concurrent request that sneaks in between (a) and (b) may
- *    over-reserve by a tiny amount. This is acceptable for a temple counter
- *    staffed by one or two admins; add a Mongo transaction if that changes.
- *
- * 4. The 30-minute hold is enforced by the cleanup job
- *    (src/utilities/helpers/release-expired-reservations.js), which is
- *    scheduled in server.js. The TTL index on InventoryReservation is a
- *    belt-and-suspenders fallback for the MongoDB TTL background task.
+ * Everything is persisted, so a restart loses nothing: the job simply finds the expired rows.
  */
 
-const Item = require("../../models/items");
-const Service = require("../../models/services");
-const GeneralItem = require("../../models/general-items");
 const InventoryReservation = require("../../models/inventory-reservations");
+const InventoryAdjustment = require("../../models/inventory-adjustments");
 const EventSeatHold = require("../../models/event-seat-holds");
 const {
   ORDER_HOLD_TTL_MS,
@@ -49,99 +36,84 @@ const {
   confirmSeats,
   bookSeatsDirect,
 } = require("../../common/utils/event-seats");
+const {
+  REF_MODELS,
+  inventoryFlag,
+  thresholdField,
+  toObjectId,
+  runInTransaction,
+  reserveStock,
+  releaseReservedStock,
+  deductSold,
+} = require("../../common/utils/inventory-stock");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-const REF_MODELS = { Item, Service, GeneralItem };
-
-/**
- * Returns the field name that gates inventory tracking for a given refType.
- * GeneralItem reuses Item's field names (isInventoryApplicable/threshold) —
- * see models/general-items, which mirrors Item's inventory shape exactly.
- */
-function inventoryFlag(refType) {
-  return refType === "Service" ? "isInventoryRequired" : "isInventoryApplicable";
+/** Why a booking cannot reserve, as one message a cashier can act on. */
+function shortageMessage(ref, refType) {
+  const currentStock = ref.currentStock ?? 0;
+  const reserved = ref.reservedStock ?? 0;
+  const threshold = ref[thresholdField(refType)] ?? 0;
+  if (currentStock <= 0 && reserved <= 0) {
+    return `Inventory has not been initialized for "${ref.name}": no stock has been added yet. Add stock in Inventory Adjustment before booking it.`;
+  }
+  const bookable = Math.max(0, currentStock - reserved - threshold);
+  return `Insufficient stock for "${ref.name}": only ${bookable} unit(s) available for booking (${currentStock} in stock, ${reserved} reserved by other bookings, ${threshold} safety buffer).`;
 }
 
 /**
- * Returns the threshold field name for a given refType.
+ * Reserves `requestedQty` units of `refType:refId` for an order line - atomically - and writes the reservation row.
+ * Returns the reservation, or null when inventory is not tracked for this item/service (nothing to reserve).
+ * Throws a plain string on a business-rule failure (shown to the cashier).
  */
-function thresholdField(refType) {
-  return refType === "Service" ? "thresholdCount" : "threshold";
-}
-
-/**
- * Sum of all active (non-expired, non-consumed, non-cancelled) reservation
- * quantities for a specific ref.
- *
- * Called inside createOrder to calculate how much stock remains claimable.
- */
-async function sumActiveReservations(refType, refId) {
-  const result = await InventoryReservation.aggregate([
-    {
-      $match: {
-        refType,
-        refId: typeof refId === "string" ? require("mongoose").Types.ObjectId.createFromHexString(refId) : refId,
-        status: "active",
-        expiresAt: { $gt: new Date() }, // belt-and-suspenders: ignore rows the cleanup job hasn't touched yet
-      },
-    },
-    { $group: { _id: null, total: { $sum: "$quantity" } } },
-  ]);
-  return result[0]?.total ?? 0;
-}
-
-/**
- * Checks whether `requestedQty` units of `refType:refId` can be reserved
- * right now, and if so writes the InventoryReservation row.
- *
- * Returns the new reservation document on success.
- * Throws a plain string on business-rule violations (caught by exceptionHandler).
- *
- * @param {string} refType       "Item" | "Service"
- * @param {string|ObjectId} refId
- * @param {number} requestedQty
- * @param {string|ObjectId} orderId  The order this reservation belongs to
- */
-async function placeReservation(refType, refId, requestedQty, orderId) {
+async function placeReservation(refType, refId, requestedQty, orderId, lineKey = null) {
   const Model = REF_MODELS[refType];
   const flag = inventoryFlag(refType);
   const tField = thresholdField(refType);
 
-  const ref = await Model.findOne(
-    Model.notDeletedFilter({ _id: refId, [flag]: true, status: 1 })
-  ).select(`name code currentStock ${tField}`);
+  const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, [flag]: true, status: 1 })).select(
+    `name code currentStock reservedStock ${tField}`
+  );
+  if (!ref) return null; // inventory not applicable - the booking follows the existing flow
 
-  if (!ref) {
-    // Inventory not applicable for this item/service — no reservation needed
-    return null;
+  // The check and the hold are one conditional update: it only succeeds while the units are still bookable.
+  const held = await reserveStock(refType, refId, requestedQty);
+  if (!held) {
+    // Say why, with the numbers as they are right now.
+    const fresh = await Model.findOne({ _id: refId }).select(`name currentStock reservedStock ${tField}`);
+    throw shortageMessage(fresh || ref, refType);
   }
 
-  const currentStock = ref.currentStock ?? 0;
-  const threshold = ref[tField] ?? 0;
-  // Maximum units that may ever be held simultaneously (stock minus safety buffer)
-  const maxReservable = Math.max(0, currentStock - threshold);
-
-  // How much is already held by other active reservations?
-  const alreadyReserved = await sumActiveReservations(refType, refId);
-  const remaining = maxReservable - alreadyReserved;
-
-  if (requestedQty > remaining) {
-    throw `Insufficient stock for "${ref.name}": only ${remaining} unit(s) available for booking (${currentStock} in stock, ${alreadyReserved} already reserved, ${threshold} safety buffer).`;
+  try {
+    return await InventoryReservation.create({
+      orderId,
+      lineKey,
+      refType,
+      refId,
+      quantity: requestedQty,
+      status: "active",
+      expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
+    });
+  } catch (err) {
+    await releaseReservedStock(refType, refId, requestedQty).catch(() => {});
+    throw err;
   }
+}
 
-  const expiresAt = new Date(Date.now() + RESERVATION_TTL_MS);
-
-  const reservation = await InventoryReservation.create({
-    orderId,
-    refType,
-    refId,
-    quantity: requestedQty,
-    status: "active",
-    expiresAt,
-  });
-
-  return reservation;
+/**
+ * Releases ONE hold: claims it (active -> `status`) with a conditional update and, only if this call won the claim,
+ * returns its units to the pool. Safe to call any number of times, from the expiry job, a payment callback or a retry.
+ * Returns true when this call released it.
+ */
+async function releaseReservation(reservation, status, reason) {
+  const claimed = await InventoryReservation.findOneAndUpdate(
+    { _id: reservation._id, status: "active" },
+    { $set: { status, releasedAt: new Date(), releaseReason: reason } },
+    { returnDocument: "after" }
+  );
+  if (!claimed) return false;
+  await releaseReservedStock(claimed.refType, claimed.refId, claimed.quantity);
+  return true;
 }
 
 /**
@@ -173,94 +145,176 @@ async function placeEventReservation(line, orderId, ownerId = null, posOnly = fa
 }
 
 /**
- * Place reservations for ALL inventory-applicable lines in a cart.
- * If any line fails, all previously placed reservations for this order
- * are immediately cancelled (best-effort rollback).
+ * Place reservations for ALL inventory-applicable lines in a cart. If any line fails, everything already placed for
+ * this order is released again (each release is its own safe claim) and the message is re-thrown.
  *
- * @param {Array<{refType, refId, quantity}>} lines
- * @param {string|ObjectId} orderId
- * @returns {Array} array of InventoryReservation documents (null entries for non-inventory lines)
+ * @returns {Array} reservation documents (null entries for lines that need none)
  */
 async function placeReservationsForOrder(lines, orderId, options = {}) {
   const placed = [];
   try {
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
       const r =
         line.refType === "Event"
           ? await placeEventReservation(line, orderId, options.ownerId, options.posOnly)
-          : await placeReservation(line.refType, line.refId, line.quantity, orderId);
+          : await placeReservation(line.refType, line.refId, line.quantity, orderId, i);
       placed.push(r);
     }
     return placed;
   } catch (err) {
-    // Roll back any reservations already placed in this loop before re-throwing
     await releaseEventHoldsForOrder(orderId).catch(() => {});
-    if (placed.length > 0) {
-      const ids = placed.filter(Boolean).map((r) => r._id);
-      await InventoryReservation.updateMany(
-        { _id: { $in: ids } },
-        { $set: { status: "cancelled", releasedAt: new Date() } }
-      ).catch(() => {
-        /* best-effort; cleanup job will catch any stragglers */
-      });
+    for (const r of placed) {
+      if (r?.refType) await releaseReservation(r, "cancelled", "order could not be placed").catch(() => {});
     }
-    throw err; // re-throw so the controller surfaces the message
+    throw err; // the controller surfaces the message
   }
 }
 
+/** The hold a line was reserved under: by its line position, else (older orders) by item and quantity. */
+async function findLineReservation(orderId, line, lineKey, usedIds) {
+  const byKey = await InventoryReservation.findOne({ orderId, lineKey });
+  if (byKey) return byKey;
+  const candidates = await InventoryReservation.find({
+    orderId,
+    refType: line.refType,
+    refId: line.refId,
+    quantity: line.quantity,
+    lineKey: null,
+  }).sort({ createdAt: 1 });
+  return candidates.find((c) => !usedIds.has(String(c._id))) ?? null;
+}
+
 /**
- * Mark all active reservations for an order as "consumed" and write a
- * permanent InventoryAdjustment "Stock Out" row + decrement currentStock for
- * each inventory-applicable line.
+ * A confirmed booking: turns each inventory line's reservation into a completed stock deduction, exactly once.
  *
- * Called inside confirmBooking, after the Booking document is written.
- * Write ordering matches the inventory controller's existing pattern:
- *   1. Decrement currentStock on Item/Service
- *   2. Write InventoryAdjustment log row
- *   3. Mark reservation consumed
+ *  - active hold      claim -> deduct physical stock and release the hold -> log a "Stock Out" movement.
+ *  - already consumed skipped (a duplicate payment callback or retried confirmation).
+ *  - hold lapsed      (paid after the 30 minutes) re-take only the units that are still genuinely free; anything
+ *                     missing is reported back as a shortfall - the sale is never allowed to drive stock below
+ *                     zero or take units another booking holds.
  *
- * @param {string|ObjectId} orderId
- * @param {Array<{refType, refId, quantity}>} lines
- * @param {string|ObjectId} bookedByUserId
- * @param {string} bookingNumber  used as remarks in the stock-out log
+ * Each line is processed in its own transaction (when supported), so the claim, the stock change and the movement
+ * row commit together or not at all.
+ *
+ * @returns {Promise<{ shortfalls: { refType, refId, name, quantity }[] }>}
  */
 async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber) {
-  const InventoryAdjustment = require("../../models/inventory-adjustments");
+  const shortfalls = [];
+  const used = new Set();
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
     if (line.refType === "Event") {
       await countEventSeats(orderId, line, bookingNumber);
       continue;
     }
     const Model = REF_MODELS[line.refType];
-    const flag = inventoryFlag(line.refType);
+    const tracked = await Model.findOne(Model.notDeletedFilter({ _id: line.refId, [inventoryFlag(line.refType)]: true })).select("name");
+    if (!tracked) continue; // not inventory-applicable - nothing to do
 
-    const ref = await Model.findOne(
-      Model.notDeletedFilter({ _id: line.refId, [flag]: true })
-    ).select("currentStock name code");
+    const reservation = await findLineReservation(orderId, line, i, used);
+    if (!reservation) {
+      // Tracked, but no hold was ever recorded (an order written before reservations existed): treat as a late sale.
+      shortfalls.push(...(await consumeWithoutHold(line, tracked.name, orderId, i, bookingNumber, bookedByUserId)));
+      continue;
+    }
+    used.add(String(reservation._id));
+    if (reservation.status === "consumed") continue; // already confirmed once
 
-    if (!ref) continue; // not inventory-applicable — nothing to do
-
-    const nextBalance = Math.max(0, (ref.currentStock ?? 0) - line.quantity);
-    ref.currentStock = nextBalance;
-    await ref.save();
-
-    await InventoryAdjustment.create({
-      refType: line.refType,
-      refId: line.refId,
-      inventoryType: "Stock Out",
-      quantity: line.quantity,
-      balance: nextBalance,
-      remarks: `Booking ${bookingNumber}`,
-      createdBy: bookedByUserId ?? null,
-    });
+    const result = await consumeOne(reservation, tracked.name, bookingNumber, bookedByUserId);
+    if (result.shortfall > 0) shortfalls.push({ refType: line.refType, refId: line.refId, name: tracked.name, quantity: result.shortfall });
   }
+  return { shortfalls };
+}
 
-  // Mark all active reservations for this order consumed
-  await InventoryReservation.updateMany(
-    { orderId, status: "active" },
-    { $set: { status: "consumed", releasedAt: new Date() } }
-  );
+async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
+  // A few passes cover the narrow case where the hold changes state between our read and our claim.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const outcome = await runInTransaction(async (session) => {
+      const current = await InventoryReservation.findById(reservation._id).session(session || null);
+      if (!current || current.status === "consumed") return { done: true, shortfall: 0 };
+      const wasActive = current.status === "active";
+
+      // Claim: only the caller that flips the row to "consumed" goes on to deduct, so the stock leaves once.
+      const claimed = await InventoryReservation.findOneAndUpdate(
+        { _id: current._id, status: current.status },
+        {
+          $set: {
+            status: "consumed",
+            confirmedAt: new Date(),
+            releasedAt: new Date(),
+            lateConfirmation: !wasActive,
+            bookingNumber: bookingNumber ?? null,
+          },
+        },
+        { returnDocument: "after", session }
+      );
+      if (!claimed) return { done: false };
+
+      const { deducted, doc } = await deductSold(claimed.refType, claimed.refId, claimed.quantity, {
+        releaseReserved: wasActive ? claimed.quantity : 0,
+        limitToAvailable: !wasActive,
+        session,
+      });
+      const shortfall = claimed.quantity - deducted;
+      if (shortfall > 0) {
+        await InventoryReservation.updateOne({ _id: claimed._id }, { $set: { shortfallQty: shortfall } }, { session });
+      }
+      if (deducted > 0) {
+        await InventoryAdjustment.create(
+          [
+            {
+              refType: claimed.refType,
+              refId: claimed.refId,
+              inventoryType: "Stock Out",
+              quantity: deducted,
+              previousStock: doc.currentStock + deducted,
+              balance: doc.currentStock,
+              remarks: `Booking ${bookingNumber}${wasActive ? "" : " (payment received after the reservation expired)"}`,
+              source: "Booking",
+              requestId: `consume:${claimed._id}`,
+              createdBy: bookedByUserId ?? null,
+            },
+          ],
+          { session }
+        );
+      }
+      return { done: true, shortfall };
+    });
+    if (outcome.done) return outcome;
+  }
+  throw new Error(`Could not confirm the stock for "${name}" - please retry.`);
+}
+
+/** A tracked line with no hold row at all: deduct what is free, report the rest. Idempotent per order line. */
+async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, bookedByUserId) {
+  const requestId = `consume:${orderId}:${lineKey}`;
+  if (await InventoryAdjustment.exists({ requestId })) return [];
+  return runInTransaction(async (session) => {
+    const { deducted, doc } = await deductSold(line.refType, line.refId, line.quantity, { limitToAvailable: true, session });
+    if (deducted > 0) {
+      await InventoryAdjustment.create(
+        [
+          {
+            refType: line.refType,
+            refId: line.refId,
+            inventoryType: "Stock Out",
+            quantity: deducted,
+            previousStock: doc.currentStock + deducted,
+            balance: doc.currentStock,
+            remarks: `Booking ${bookingNumber}`,
+            source: "Booking",
+            requestId,
+            createdBy: bookedByUserId ?? null,
+          },
+        ],
+        { session }
+      );
+    }
+    const shortfall = line.quantity - deducted;
+    return shortfall > 0 ? [{ refType: line.refType, refId: line.refId, name, quantity: shortfall }] : [];
+  });
 }
 
 /**
@@ -305,88 +359,89 @@ async function releaseEventHoldsForOrder(orderId) {
   for (const h of holds) await releaseHold(h._id);
 }
 
-/**
- * Immediately cancel all active reservations for an order (e.g. on
- * explicit cancellation or error rollback).
- */
-async function cancelReservations(orderId) {
+/** Immediately releases every active hold of an order (payment cancelled/failed, order abandoned, error rollback). */
+async function cancelReservations(orderId, reason = "order cancelled") {
   await releaseEventHoldsForOrder(orderId);
-  await InventoryReservation.updateMany(
-    { orderId, status: "active" },
-    { $set: { status: "cancelled", releasedAt: new Date() } }
-  );
+  const active = await InventoryReservation.find({ orderId, status: "active" });
+  for (const r of active) await releaseReservation(r, "cancelled", reason);
 }
 
 /**
- * Quick availability check — returns the available-to-reserve quantity for
- * a ref WITHOUT writing anything. Used by the summary endpoint.
- *
- * @param {string} refType
- * @param {string|ObjectId} refId
- * @returns {{ isInventoryApplicable: boolean, currentStock: number, reservedQty: number, availableQty: number, threshold: number }}
+ * Releases every hold whose 30 minutes are up. Each one is its own safe claim, so running this twice (or while a
+ * payment callback confirms the same hold) never returns the same units twice. Returns the orderIds affected.
+ */
+async function releaseExpiredHolds(now = new Date(), limit = 500) {
+  const lapsed = await InventoryReservation.find({ status: "active", expiresAt: { $lte: now } }).limit(limit);
+  const released = [];
+  for (const r of lapsed) {
+    if (await releaseReservation(r, "expired", "reservation expired after 30 minutes")) released.push(r);
+  }
+  return released;
+}
+
+/**
+ * Rebuilds every master's reservedStock from the reservation rows that are still active. Run once when the server
+ * starts (before it takes traffic), so the counters are right after a deploy, a restore or a crash between a
+ * reservation's two writes.
+ */
+async function reconcileReservedStock() {
+  const totals = await InventoryReservation.aggregate([
+    { $match: { status: "active" } },
+    { $group: { _id: { refType: "$refType", refId: "$refId" }, total: { $sum: "$quantity" } } },
+  ]);
+  const byType = { Item: new Map(), Service: new Map(), GeneralItem: new Map() };
+  for (const t of totals) byType[t._id.refType]?.set(String(t._id.refId), t.total);
+
+  let fixed = 0;
+  for (const [refType, Model] of Object.entries(REF_MODELS)) {
+    const wanted = byType[refType];
+    const rows = await Model.find({ $or: [{ reservedStock: { $gt: 0 } }, { reservedStock: { $exists: false } }, { _id: { $in: [...wanted.keys()].map(toObjectId) } }] }).select("reservedStock");
+    for (const row of rows) {
+      const expected = wanted.get(String(row._id)) ?? 0;
+      if ((row.reservedStock ?? 0) !== expected || row.reservedStock === undefined) {
+        await Model.updateOne({ _id: row._id }, { $set: { reservedStock: expected } });
+        fixed += 1;
+      }
+    }
+  }
+  return { fixed };
+}
+
+/**
+ * What can be booked right now for one master, WITHOUT writing anything. `availableQty` is what a new booking may
+ * still reserve (physical - reserved - threshold).
  */
 async function getAvailability(refType, refId) {
   const Model = REF_MODELS[refType];
   const flag = inventoryFlag(refType);
   const tField = thresholdField(refType);
 
-  const ref = await Model.findOne(
-    Model.notDeletedFilter({ _id: refId, status: 1 })
-  ).select(`${flag} currentStock ${tField}`);
-
+  const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, status: 1 })).select(`${flag} currentStock reservedStock ${tField}`);
   if (!ref || !ref[flag]) {
     return { isInventoryApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 };
   }
 
   const currentStock = ref.currentStock ?? 0;
   const threshold = ref[tField] ?? 0;
-  const reservedQty = await sumActiveReservations(refType, refId);
-  const availableQty = Math.max(0, currentStock - threshold - reservedQty);
-
-  return { isInventoryApplicable: true, currentStock, reservedQty, availableQty, threshold };
+  const reservedQty = ref.reservedStock ?? 0;
+  return {
+    isInventoryApplicable: true,
+    currentStock,
+    reservedQty,
+    availableQty: Math.max(0, currentStock - reservedQty - threshold),
+    threshold,
+  };
 }
 
 /**
- * Batch version of getAvailability() for a listing page (the POS catalogue's
- * item/service grid) — one reservation-sum aggregation covering every ref on
- * the page, instead of getAvailability()'s own two queries (a re-fetch of
- * the ref doc, then a per-ref reservation sum) run once per row.
+ * Batch version of getAvailability() for a listing page: the already-loaded documents carry everything needed
+ * (currentStock, reservedStock, threshold, the inventory flag), so no extra queries are made.
  *
- * A 50-item page previously meant up to 100 extra round trips to Mongo on
- * top of the listing query itself — negligible against a local database,
- * but each one pays a real network round trip once the backend (Render) and
- * the database (Atlas) are no longer on the same machine, which is exactly
- * why the catalogue loaded fine locally but visibly slower once deployed.
- *
- * `refs` are the already-loaded documents from the caller's own listing
- * query — their currentStock/threshold/inventory-flag fields are reused
- * directly rather than re-fetched, since the caller already selected them.
- *
- * @param {"Item"|"Service"} refType
- * @param {Array<{_id, currentStock?, threshold?, thresholdCount?, isInventoryApplicable?, isInventoryRequired?}>} refs
- * @returns {Promise<Map<string, {isInventoryApplicable, currentStock, reservedQty, availableQty, threshold}>>}
- *   Keyed by `String(ref._id)`.
+ * @returns {Promise<Map<string, {isInventoryApplicable, currentStock, reservedQty, availableQty, threshold}>>} keyed by String(ref._id)
  */
 async function getAvailabilityBatch(refType, refs) {
   const flag = inventoryFlag(refType);
   const tField = thresholdField(refType);
-
-  const applicableRefs = refs.filter((r) => r[flag]);
-  let reservedByRefId = new Map();
-  if (applicableRefs.length > 0) {
-    const rows = await InventoryReservation.aggregate([
-      {
-        $match: {
-          refType,
-          refId: { $in: applicableRefs.map((r) => r._id) },
-          status: "active",
-          expiresAt: { $gt: new Date() },
-        },
-      },
-      { $group: { _id: "$refId", total: { $sum: "$quantity" } } },
-    ]);
-    reservedByRefId = new Map(rows.map((r) => [String(r._id), r.total]));
-  }
 
   const result = new Map();
   for (const ref of refs) {
@@ -396,9 +451,14 @@ async function getAvailabilityBatch(refType, refs) {
     }
     const currentStock = ref.currentStock ?? 0;
     const threshold = ref[tField] ?? 0;
-    const reservedQty = reservedByRefId.get(String(ref._id)) ?? 0;
-    const availableQty = Math.max(0, currentStock - threshold - reservedQty);
-    result.set(String(ref._id), { isInventoryApplicable: true, currentStock, reservedQty, availableQty, threshold });
+    const reservedQty = ref.reservedStock ?? 0;
+    result.set(String(ref._id), {
+      isInventoryApplicable: true,
+      currentStock,
+      reservedQty,
+      availableQty: Math.max(0, currentStock - reservedQty - threshold),
+      threshold,
+    });
   }
   return result;
 }
@@ -408,6 +468,9 @@ module.exports = {
   placeReservationsForOrder,
   consumeReservations,
   cancelReservations,
+  releaseReservation,
+  releaseExpiredHolds,
+  reconcileReservedStock,
   getAvailability,
   getAvailabilityBatch,
   RESERVATION_TTL_MS,

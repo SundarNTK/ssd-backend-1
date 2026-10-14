@@ -2,15 +2,19 @@ const env = require("./config/env");
 const connectDatabase = require("./config/database");
 const app = require("./app");
 const { startReservationCleanupJob } = require("./utilities/helpers/release-expired-reservations");
+const { reconcileReservedStock } = require("./controllers/pos/inventory-reservation");
 
 async function start() {
   await connectDatabase();
 
   // Start the inventory-reservation expiry cleanup job.
-  // Runs every 5 minutes — releases held stock for orders that were
+  // Runs every minute — releases held stock for orders that were
   // abandoned without being confirmed (the 30-minute cart hold).
   // Must start AFTER the DB connection is ready so the Mongoose models
   // are initialised before the first query fires.
+  // Re-derive every master's reserved-stock counter from the open reservation rows (restart / deploy / crash safety),
+  // then start the expiry job - reservations live in the database, so nothing is lost when the server restarts.
+  await reconcileReservedStock().then((r) => console.log(`>>> [inventory] reserved-stock reconciled (${r.fixed} corrected)`)).catch((e) => console.error(">>> [inventory] reconcile failed:", e));
   startReservationCleanupJob();
 
   // Explicit "0.0.0.0" — Render (and most PaaS hosts) route traffic to the

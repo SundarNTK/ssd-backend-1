@@ -492,7 +492,13 @@ async function writePosBookingFromOrder(order, paidAmount, paymentOverride = {})
     throw writeError;
   }
 
-  await consumeReservations(order._id, order.lines, order.bookedBy, bookingNumber);
+  const consumed = await consumeReservations(order._id, order.lines, order.bookedBy, bookingNumber);
+  const shortfalls = consumed?.shortfalls ?? [];
+  if (shortfalls.length > 0) {
+    // Paid after the reservation expired and the stock is gone: the booking stands, flagged for a manual follow-up.
+    await PosBooking.updateOne({ _id: booking._id }, { $set: { inventoryShortfall: shortfalls } });
+    console.warn(`>>> [inventory] booking ${bookingNumber} confirmed with a stock shortfall:`, JSON.stringify(shortfalls));
+  }
 
   const customerSnap = order.customer?.customerCode
     ? order.customer
@@ -1416,7 +1422,13 @@ async function writePosBookingOnly(order, amountNow, transaction) {
     throw writeError;
   }
 
-  await consumeReservations(order._id, order.lines, order.bookedBy, bookingNumber);
+  const consumed = await consumeReservations(order._id, order.lines, order.bookedBy, bookingNumber);
+  const shortfalls = consumed?.shortfalls ?? [];
+  if (shortfalls.length > 0) {
+    // Paid after the reservation expired and the stock is gone: the booking stands, flagged for a manual follow-up.
+    await PosBooking.updateOne({ _id: booking._id }, { $set: { inventoryShortfall: shortfalls } });
+    console.warn(`>>> [inventory] booking ${bookingNumber} confirmed with a stock shortfall:`, JSON.stringify(shortfalls));
+  }
   return booking;
 }
 

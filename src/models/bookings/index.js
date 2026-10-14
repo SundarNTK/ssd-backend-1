@@ -68,6 +68,12 @@ const bookingSchema = new mongoose.Schema({
   customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
   // Who the booking was made for, exactly as entered at the desk when it was booked (name / Singapore mobile /
   // optional email). Kept on the booking so it still reads the same if the customer profile changes later.
+  // Stock a late payment could not deduct (the hold had expired and the stock was gone): needs a manual follow-up
+  // (restock, or refund). Empty for every normal booking.
+  inventoryShortfall: {
+    type: [{ refType: String, refId: mongoose.Schema.Types.ObjectId, name: String, quantity: Number, _id: false }],
+    default: [],
+  },
   customerDetails: {
     type: new mongoose.Schema(
       { name: { type: String, default: "" }, mobileNumber: { type: String, default: "" }, email: { type: String, default: "" } },

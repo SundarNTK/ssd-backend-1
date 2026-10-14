@@ -46,6 +46,9 @@ const generalItemSchema = new mongoose.Schema({
   maxQuantity: { type: Number, default: 0 }, // 0 = unlimited
   quantityReduction: { type: Number, default: 1 },
   currentStock: { type: Number, default: 0, min: 0 },
+  // Units held by pending bookings (open reservations). Moved only by the atomic reserve/release/consume helpers in
+  // common/utils/inventory-stock.js. Available to book = currentStock - reservedStock - threshold.
+  reservedStock: { type: Number, default: 0, min: 0 },
 
   posAvailability: { type: Boolean, default: true },
   // Independent of posAvailability — gates the Admin Booking Panel's own

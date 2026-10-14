@@ -6,10 +6,9 @@
  * expiresAt has passed, marks it "expired", and cancels the parent Order
  * if all of its reservations have now lapsed.
  *
- * No stock is decremented here — reservations are a SOFT hold. The real
- * currentStock only moves when a booking is confirmed (Stock Out via
- * InventoryAdjustment). Releasing a reservation simply means the held
- * quantity is once again available for new reservations.
+ * Releasing a reservation returns its units from reservedStock to the
+ * available pool; physical stock (currentStock) only moves when a booking is
+ * confirmed or an adjustment is made.
  *
  * Why a periodic job instead of a MongoDB TTL index that auto-deletes?
  *   - We need to update the parent Order's status when its reservations
@@ -22,6 +21,7 @@
  */
 
 const InventoryReservation = require("../../../models/inventory-reservations");
+const { releaseExpiredHolds } = require("../../../controllers/pos/inventory-reservation");
 const EventSeatHold = require("../../../models/event-seat-holds");
 const { releaseSeats } = require("../../../common/utils/event-seats");
 const { Order } = require("../../../models/orders");
@@ -44,22 +44,14 @@ const ORDER_MODELS = [Order, PosOrder];
 async function releaseExpiredReservations() {
   const now = new Date();
 
-  // Find all active reservations that have passed their expiry
-  const expired = await InventoryReservation.find({
-    status: "active",
-    expiresAt: { $lte: now },
-  }).select("_id orderId");
+  // Each lapsed hold is claimed (active -> expired) with a conditional update and only the winner gives its units
+  // back, so a second job run - or a payment callback confirming the same hold at the same moment - never
+  // releases the same quantity twice. See controllers/pos/inventory-reservation.
+  const released = await releaseExpiredHolds(now);
+  if (released.length === 0) return { released: 0, ordersCancelled: 0 };
 
-  if (expired.length === 0) return { released: 0, ordersCancelled: 0 };
-
-  const expiredIds = expired.map((r) => r._id);
-  const affectedOrderIds = [...new Set(expired.map((r) => String(r.orderId)))];
-
-  // Mark reservations expired
-  await InventoryReservation.updateMany(
-    { _id: { $in: expiredIds } },
-    { $set: { status: "expired", releasedAt: now } }
-  );
+  const expiredIds = released.map((r) => r._id);
+  const affectedOrderIds = [...new Set(released.map((r) => String(r.orderId)))];
 
   // For each affected order: if it's still pending AND has no active
   // reservations left, mark it cancelled too
@@ -152,11 +144,12 @@ async function releaseExpiredEventHolds() {
 /**
  * Start the periodic cleanup job.
  *
- * @param {number} [intervalMs=300_000] How often to run (default: 5 minutes)
+ * @param {number} [intervalMs=60_000] How often to run (default: every minute, so a hold that has lapsed is back on
+ *   sale within about a minute of its 30 minutes ending)
  * @returns {NodeJS.Timeout} The interval handle — store it if you need to
  *   stop the job cleanly (e.g. in tests).
  */
-function startReservationCleanupJob(intervalMs = 5 * 60 * 1000) {
+function startReservationCleanupJob(intervalMs = 60 * 1000) {
   // Run once immediately on startup to catch any reservations that expired
   // while the server was down
   releaseExpiredReservations().catch((err) => {
