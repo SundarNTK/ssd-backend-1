@@ -344,7 +344,7 @@ router.put(
   hydrateMultipartBody,
   validateBody(updateSchema),
   requireTicketImage(Event),
-  requireSessionCutoff(Event),
+  requireSessionCutoff(Event, "futureBookingCutOffDate"),
   update
 );
 router.delete("/events/:id", requirePermission("events", "fullAccess"), remove);

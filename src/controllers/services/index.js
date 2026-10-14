@@ -50,7 +50,7 @@ router.put(
   hydrateMultipartBody,
   validateBody(updateSchema),
   requireTicketImage(Service),
-  requireSessionCutoff(Service),
+  requireSessionCutoff(Service, "bookingCutoffDate"),
   crud.update
 );
 router.delete("/services/:id", requirePermission("services", "fullAccess"), crud.remove);
