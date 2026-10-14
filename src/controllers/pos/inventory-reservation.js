@@ -417,14 +417,14 @@ async function getAvailability(refType, refId) {
 
   const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, status: 1 })).select(`${flag} currentStock reservedStock ${tField}`);
   if (!ref || !ref[flag]) {
-    return { isInventoryApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 };
+    return { isInventoryApplicable: false, isApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 };
   }
 
   const currentStock = ref.currentStock ?? 0;
   const threshold = ref[tField] ?? 0;
   const reservedQty = ref.reservedStock ?? 0;
   return {
-    isInventoryApplicable: true,
+    isInventoryApplicable: true, isApplicable: true,
     currentStock,
     reservedQty,
     availableQty: Math.max(0, currentStock - reservedQty),
@@ -445,14 +445,14 @@ async function getAvailabilityBatch(refType, refs) {
   const result = new Map();
   for (const ref of refs) {
     if (!ref[flag]) {
-      result.set(String(ref._id), { isInventoryApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 });
+      result.set(String(ref._id), { isInventoryApplicable: false, isApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 });
       continue;
     }
     const currentStock = ref.currentStock ?? 0;
     const threshold = ref[tField] ?? 0;
     const reservedQty = ref.reservedStock ?? 0;
     result.set(String(ref._id), {
-      isInventoryApplicable: true,
+      isInventoryApplicable: true, isApplicable: true,
       currentStock,
       reservedQty,
       availableQty: Math.max(0, currentStock - reservedQty),
