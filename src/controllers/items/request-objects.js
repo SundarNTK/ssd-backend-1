@@ -82,7 +82,8 @@ const createSchema = Joi.object({
   deityMapping: deityMappingField,
   printingGroup: printingGroupField,
 
-  categoryDetails: Joi.array().items(categoryDetailEntry).default([]),
+  // Mandatory: at least one Category (Sub Category stays optional).
+  categoryDetails: Joi.array().items(categoryDetailEntry).min(1).required().messages({ "array.min": "At least one Category is required.", "any.required": "At least one Category is required." }),
 
   isInventoryApplicable: Joi.boolean().default(false),
   unitOfMeasure: unitOfMeasureField.allow(null).default(null),
@@ -121,7 +122,7 @@ const updateSchema = Joi.object({
   deityMapping: deityMappingFieldForUpdate,
   printingGroup: printingGroupFieldForUpdate,
 
-  categoryDetails: Joi.array().items(categoryDetailEntry),
+  categoryDetails: Joi.array().items(categoryDetailEntry).min(1).messages({ "array.min": "At least one Category is required." }),
 
   isInventoryApplicable: Joi.boolean(),
   unitOfMeasure: unitOfMeasureField.allow(null),

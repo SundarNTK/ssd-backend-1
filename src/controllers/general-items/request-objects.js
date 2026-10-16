@@ -28,7 +28,8 @@ const createSchema = Joi.object({
   ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
 
-  categoryDetails: Joi.array().items(categoryDetailEntry).default([]),
+  // Mandatory: at least one Category (Sub Category stays optional).
+  categoryDetails: Joi.array().items(categoryDetailEntry).min(1).required().messages({ "array.min": "At least one Category is required.", "any.required": "At least one Category is required." }),
 
   isInventoryApplicable: Joi.boolean().default(false),
   unitOfMeasure: unitOfMeasureField.allow(null).default(null),
@@ -56,7 +57,7 @@ const updateSchema = Joi.object({
   ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
 
-  categoryDetails: Joi.array().items(categoryDetailEntry),
+  categoryDetails: Joi.array().items(categoryDetailEntry).min(1).messages({ "array.min": "At least one Category is required." }),
 
   isInventoryApplicable: Joi.boolean(),
   unitOfMeasure: unitOfMeasureField.allow(null),
