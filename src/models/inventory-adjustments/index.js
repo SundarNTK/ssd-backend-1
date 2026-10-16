@@ -15,7 +15,12 @@ const inventoryAdjustmentSchema = new mongoose.Schema({
   // matching this row's own refType.
   refId: { type: mongoose.Schema.Types.ObjectId, required: true, refPath: "refType" },
   inventoryType: { type: String, enum: ["Stock In", "Stock Out"], required: true },
+  // Stock units that actually moved (for a booking: booked quantity x reduction factor).
   quantity: { type: Number, required: true, min: 1 },
+  // Booking movements only: the quantity booked and the stock units each booked unit uses (Quantity Reduction), so
+  // "3 booked x 5 per unit = 15" can be read back from the record.
+  bookedQuantity: { type: Number, default: null },
+  reductionFactor: { type: Number, default: null },
   // The ref's stock immediately BEFORE this movement (balance is the stock after it), so previous -> balance reads as one step.
   previousStock: { type: Number, default: null },
   // The ref's currentStock immediately after this movement was applied —

@@ -219,6 +219,8 @@ async function history(req, res) {
       code: r.refId?.code ?? "—",
       inventoryType: r.inventoryType,
       quantity: r.quantity,
+      bookedQuantity: r.bookedQuantity ?? null,
+      reductionFactor: r.reductionFactor ?? null,
       source: r.source ?? "Inventory Adjustment",
       previousStock: r.previousStock ?? null,
       balance: r.balance,
