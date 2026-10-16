@@ -49,15 +49,21 @@ const {
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * Quantity Reduction: how many units of stock ONE booked unit uses (an item booked 3 times with a reduction of 5
+ * holds, and later deducts, 15). Items and General Items carry it; Services always use 1.
+ */
+const reductionOf = (refType, master) => (refType === "Service" ? 1 : Math.max(1, Math.floor(Number(master?.quantityReduction) || 1)));
+
 /** Why a booking cannot reserve, as one message a cashier can act on. */
-function shortageMessage(ref, refType) {
+function shortageMessage(ref, refType, factor = 1) {
   const currentStock = ref.currentStock ?? 0;
   const reserved = ref.reservedStock ?? 0;
   if (currentStock <= 0 && reserved <= 0) {
     return `Inventory has not been initialized for "${ref.name}": no stock has been added yet. Add stock in Inventory Adjustment before booking it.`;
   }
-  const bookable = Math.max(0, currentStock - reserved);
-  return `Insufficient stock for "${ref.name}": only ${bookable} unit(s) available for booking (${currentStock} in stock, ${reserved} reserved by other bookings).`;
+  const bookable = Math.floor(Math.max(0, currentStock - reserved) / factor);
+  return `Insufficient stock for "${ref.name}": only ${bookable} available for booking (${currentStock} in stock, ${reserved} reserved by other bookings${factor > 1 ? `; each booked unit uses ${factor} from stock` : ""}).`;
 }
 
 /**
@@ -71,16 +77,19 @@ async function placeReservation(refType, refId, requestedQty, orderId, lineKey =
   const tField = thresholdField(refType);
 
   const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, [flag]: true, status: 1 })).select(
-    `name code currentStock reservedStock ${tField}`
+    `name code currentStock reservedStock quantityReduction ${tField}`
   );
   if (!ref) return null; // inventory not applicable - the booking follows the existing flow
 
-  // The check and the hold are one conditional update: it only succeeds while the units are still bookable.
-  const held = await reserveStock(refType, refId, requestedQty);
+  // The booking holds quantity x Quantity Reduction units of stock. The check and the hold are one conditional
+  // update: it only succeeds while that many units are still bookable.
+  const factor = reductionOf(refType, ref);
+  const stockUnits = requestedQty * factor;
+  const held = await reserveStock(refType, refId, stockUnits);
   if (!held) {
     // Say why, with the numbers as they are right now.
     const fresh = await Model.findOne({ _id: refId }).select(`name currentStock reservedStock ${tField}`);
-    throw shortageMessage(fresh || ref, refType);
+    throw shortageMessage(fresh || ref, refType, factor);
   }
 
   try {
@@ -90,11 +99,12 @@ async function placeReservation(refType, refId, requestedQty, orderId, lineKey =
       refType,
       refId,
       quantity: requestedQty,
+      stockQuantity: stockUnits,
       status: "active",
       expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
     });
   } catch (err) {
-    await releaseReservedStock(refType, refId, requestedQty).catch(() => {});
+    await releaseReservedStock(refType, refId, stockUnits).catch(() => {});
     throw err;
   }
 }
@@ -111,7 +121,7 @@ async function releaseReservation(reservation, status, reason) {
     { returnDocument: "after" }
   );
   if (!claimed) return false;
-  await releaseReservedStock(claimed.refType, claimed.refId, claimed.quantity);
+  await releaseReservedStock(claimed.refType, claimed.refId, claimed.stockQuantity ?? claimed.quantity);
   return true;
 }
 
@@ -209,13 +219,13 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
       continue;
     }
     const Model = REF_MODELS[line.refType];
-    const tracked = await Model.findOne(Model.notDeletedFilter({ _id: line.refId, [inventoryFlag(line.refType)]: true })).select("name");
+    const tracked = await Model.findOne(Model.notDeletedFilter({ _id: line.refId, [inventoryFlag(line.refType)]: true })).select("name quantityReduction");
     if (!tracked) continue; // not inventory-applicable - nothing to do
 
     const reservation = await findLineReservation(orderId, line, i, used);
     if (!reservation) {
       // Tracked, but no hold was ever recorded (an order written before reservations existed): treat as a late sale.
-      shortfalls.push(...(await consumeWithoutHold(line, tracked.name, orderId, i, bookingNumber, bookedByUserId)));
+      shortfalls.push(...(await consumeWithoutHold(line, tracked.name, orderId, i, bookingNumber, bookedByUserId, reductionOf(line.refType, tracked))));
       continue;
     }
     used.add(String(reservation._id));
@@ -251,12 +261,14 @@ async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
       );
       if (!claimed) return { done: false };
 
-      const { deducted, doc } = await deductSold(claimed.refType, claimed.refId, claimed.quantity, {
-        releaseReserved: wasActive ? claimed.quantity : 0,
+      // Stock units: the booked quantity x the master's Quantity Reduction (what was held at reservation time).
+      const units = claimed.stockQuantity ?? claimed.quantity;
+      const { deducted, doc } = await deductSold(claimed.refType, claimed.refId, units, {
+        releaseReserved: wasActive ? units : 0,
         limitToAvailable: !wasActive,
         session,
       });
-      const shortfall = claimed.quantity - deducted;
+      const shortfall = units - deducted;
       if (shortfall > 0) {
         await InventoryReservation.updateOne({ _id: claimed._id }, { $set: { shortfallQty: shortfall } }, { session });
       }
@@ -270,7 +282,7 @@ async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
               quantity: deducted,
               previousStock: doc.currentStock + deducted,
               balance: doc.currentStock,
-              remarks: `Booking ${bookingNumber}${wasActive ? "" : " (payment received after the reservation expired)"}`,
+              remarks: `Booking ${bookingNumber}${units !== claimed.quantity ? ` (${claimed.quantity} booked x ${units / claimed.quantity} per unit)` : ""}${wasActive ? "" : " (payment received after the reservation expired)"}`,
               source: "Booking",
               requestId: `consume:${claimed._id}`,
               createdBy: bookedByUserId ?? null,
@@ -287,11 +299,12 @@ async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
 }
 
 /** A tracked line with no hold row at all: deduct what is free, report the rest. Idempotent per order line. */
-async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, bookedByUserId) {
+async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, bookedByUserId, factor = 1) {
   const requestId = `consume:${orderId}:${lineKey}`;
   if (await InventoryAdjustment.exists({ requestId })) return [];
   return runInTransaction(async (session) => {
-    const { deducted, doc } = await deductSold(line.refType, line.refId, line.quantity, { limitToAvailable: true, session });
+    const units = line.quantity * factor;
+    const { deducted, doc } = await deductSold(line.refType, line.refId, units, { limitToAvailable: true, session });
     if (deducted > 0) {
       await InventoryAdjustment.create(
         [
@@ -311,7 +324,7 @@ async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, b
         { session }
       );
     }
-    const shortfall = line.quantity - deducted;
+    const shortfall = units - deducted;
     return shortfall > 0 ? [{ refType: line.refType, refId: line.refId, name, quantity: shortfall }] : [];
   });
 }
@@ -386,7 +399,7 @@ async function releaseExpiredHolds(now = new Date(), limit = 500) {
 async function reconcileReservedStock() {
   const totals = await InventoryReservation.aggregate([
     { $match: { status: "active" } },
-    { $group: { _id: { refType: "$refType", refId: "$refId" }, total: { $sum: "$quantity" } } },
+    { $group: { _id: { refType: "$refType", refId: "$refId" }, total: { $sum: { $ifNull: ["$stockQuantity", "$quantity"] } } } },
   ]);
   const byType = { Item: new Map(), Service: new Map(), GeneralItem: new Map() };
   for (const t of totals) byType[t._id.refType]?.set(String(t._id.refId), t.total);
@@ -415,7 +428,7 @@ async function getAvailability(refType, refId) {
   const flag = inventoryFlag(refType);
   const tField = thresholdField(refType);
 
-  const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, status: 1 })).select(`${flag} currentStock reservedStock ${tField}`);
+  const ref = await Model.findOne(Model.notDeletedFilter({ _id: refId, status: 1 })).select(`${flag} currentStock reservedStock quantityReduction ${tField}`);
   if (!ref || !ref[flag]) {
     return { isInventoryApplicable: false, isApplicable: false, currentStock: 0, reservedQty: 0, availableQty: Infinity, threshold: 0 };
   }
@@ -427,7 +440,9 @@ async function getAvailability(refType, refId) {
     isInventoryApplicable: true, isApplicable: true,
     currentStock,
     reservedQty,
-    availableQty: Math.max(0, currentStock - reservedQty),
+    // In BOOKING units: the stock left divided by what one booked unit uses (Quantity Reduction), rounded down.
+    availableQty: Math.floor(Math.max(0, currentStock - reservedQty) / reductionOf(refType, ref)),
+    quantityReduction: reductionOf(refType, ref),
     threshold,
   };
 }
@@ -455,7 +470,9 @@ async function getAvailabilityBatch(refType, refs) {
       isInventoryApplicable: true, isApplicable: true,
       currentStock,
       reservedQty,
-      availableQty: Math.max(0, currentStock - reservedQty),
+      // In BOOKING units: the stock left divided by what one booked unit uses (Quantity Reduction), rounded down.
+      availableQty: Math.floor(Math.max(0, currentStock - reservedQty) / reductionOf(refType, ref)),
+      quantityReduction: reductionOf(refType, ref),
       threshold,
     });
   }

@@ -16,7 +16,8 @@ const createSchema = Joi.object({
   gstType: gstTypeField.required(),
   groupLevel1: objectId.required(),
   groupLevel2: objectId.allow(null).default(null),
-  groupLevel3: objectId.allow(null).when("groupLevel2", { is: Joi.exist().not(null), then: Joi.optional(), otherwise: Joi.forbidden() }).default(null),
+  // Without a Level 2 there can be no Level 3, but the form always sends groupLevel3 (null when empty), so null is fine - only a real id is refused.
+  groupLevel3: objectId.allow(null).when("groupLevel2", { is: Joi.exist().not(null), then: Joi.optional(), otherwise: Joi.valid(null) }).default(null),
   description: Joi.string().allow("").default(""),
   status: Joi.number().valid(0, 1).default(1),
 });

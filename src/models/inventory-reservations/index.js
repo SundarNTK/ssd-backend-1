@@ -35,7 +35,10 @@ const inventoryReservationSchema = new mongoose.Schema(
     bookingNumber: { type: String, default: null },
     refType: { type: String, enum: ["Item", "Service", "GeneralItem"], required: true },
     refId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    // Booking units on the line (what the customer asked for).
     quantity: { type: Number, required: true, min: 1 },
+    // Stock units held for it = quantity x the master's Quantity Reduction (null on rows made before that: = quantity).
+    stockQuantity: { type: Number, default: null, min: 1 },
     // "active" → holds quantity from the pool
     // "consumed" → order confirmed; permanent stock-out via InventoryAdjustment
     // "expired" → 30-min window passed; quantity returned

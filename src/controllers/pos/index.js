@@ -537,7 +537,7 @@ async function listPosItems(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -708,7 +708,7 @@ async function listGeneralItems(req, res) {
       GeneralItem.find(filter)
         .populate({ path: "categoryDetails.category", select: "name color", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
         .populate({ path: "categoryDetails.subCategory", select: "name", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
-        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold quantityReduction minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -748,6 +748,8 @@ async function decorateItems(items) {
     maxFamilyMembers: item.maxFamilyMembers,
     minQuantity: item.minQuantity,
     maxQuantity: item.maxQuantity,
+    // Stock units one booked unit uses (Quantity Reduction); the available figures above are already in booked units.
+    quantityReduction: item.quantityReduction ?? 1,
     categoryDetails: item.categoryDetails,
     sessionRequired: Boolean(item.sessionRequired),
     recurringRequired: Boolean(item.recurringRequired),
@@ -798,6 +800,7 @@ async function decorateGeneralItems(generalItems) {
     color: gi.color || "",
     minQuantity: gi.minQuantity,
     maxQuantity: gi.maxQuantity,
+    quantityReduction: gi.quantityReduction ?? 1,
     categoryDetails: gi.categoryDetails,
     favorite: Boolean(gi.favorite),
     inventory: availByRefId.get(String(gi._id)),
@@ -1016,7 +1019,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
+                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
               )
           )
         : [],
