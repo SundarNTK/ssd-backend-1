@@ -18,6 +18,7 @@ const InventoryPending = require("../../models/inventory-pending");
 const AvailableStockHistory = require("../../models/available-stock-history");
 const { REF_MODELS, trackedFilter, runInTransaction, applyManualDelta } = require("../../common/utils/inventory-stock");
 const { InventoryConflict } = require("./adjust");
+const { fulfilDeficits } = require("../../common/utils/stock-reserve");
 
 const MAX_QUEUED = 1000000;
 
@@ -167,6 +168,8 @@ async function applyPending({ refType, refId, requestId, userId = null }) {
         ],
         { session }
       );
+      // New stock settles outstanding Stock Reserve shortages first; only the rest stays as available stock.
+      if (inventoryType === "Stock In") await fulfilDeficits({ refType, refId, incoming: quantity, session, userId });
       await AvailableStockHistory.create(
         [
           {

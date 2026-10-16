@@ -30,7 +30,7 @@ const inventoryAdjustmentSchema = new mongoose.Schema({
   remarks: { type: String, default: "" },
   // Where the movement came from: typed directly on the Inventory Adjustment screen, queued on Available Stock and
   // sent with "Add to Adjust", or deducted by a confirmed booking.
-  source: { type: String, enum: ["Inventory Adjustment", "Available Stock", "Booking"], default: "Inventory Adjustment" },
+  source: { type: String, enum: ["Inventory Adjustment", "Available Stock", "Booking", "Stock Reserve"], default: "Inventory Adjustment" },
   // One-time key of this movement ("<batchId>:<n>" for a manual batch, "consume:<reservationId>" for a booking):
   // the unique index below makes a retried request or a repeated confirmation impossible to apply twice.
   requestId: { type: String, default: undefined },

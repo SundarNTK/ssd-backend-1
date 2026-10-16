@@ -28,6 +28,7 @@
 
 const InventoryReservation = require("../../models/inventory-reservations");
 const InventoryAdjustment = require("../../models/inventory-adjustments");
+const { createReserve, isFutureSession } = require("../../common/utils/stock-reserve");
 const EventSeatHold = require("../../models/event-seat-holds");
 const {
   ORDER_HOLD_TTL_MS,
@@ -219,25 +220,27 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
       continue;
     }
     const Model = REF_MODELS[line.refType];
-    const tracked = await Model.findOne(Model.notDeletedFilter({ _id: line.refId, [inventoryFlag(line.refType)]: true })).select("name quantityReduction");
+    const tracked = await Model.findOne(Model.notDeletedFilter({ _id: line.refId, [inventoryFlag(line.refType)]: true })).select("name code quantityReduction");
     if (!tracked) continue; // not inventory-applicable - nothing to do
 
     const reservation = await findLineReservation(orderId, line, i, used);
     if (!reservation) {
       // Tracked, but no hold was ever recorded (an order written before reservations existed): treat as a late sale.
-      shortfalls.push(...(await consumeWithoutHold(line, tracked.name, orderId, i, bookingNumber, bookedByUserId, reductionOf(line.refType, tracked))));
+      shortfalls.push(...(await consumeWithoutHold(line, tracked.name, orderId, i, bookingNumber, bookedByUserId, reductionOf(line.refType, tracked), tracked.code)));
       continue;
     }
     used.add(String(reservation._id));
     if (reservation.status === "consumed") continue; // already confirmed once
 
-    const result = await consumeOne(reservation, tracked.name, bookingNumber, bookedByUserId);
+    const result = await consumeOne(reservation, tracked.name, bookingNumber, bookedByUserId, { sessionDate: line.sessionDate, code: tracked.code });
     if (result.shortfall > 0) shortfalls.push({ refType: line.refType, refId: line.refId, name: tracked.name, quantity: result.shortfall });
   }
   return { shortfalls };
 }
 
-async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
+async function consumeOne(reservation, name, bookingNumber, bookedByUserId, { sessionDate = null, code = "" } = {}) {
+  // A booking for a FUTURE session day does not touch stock now: its hold becomes a Stock Reserve for that day.
+  const deferred = isFutureSession(sessionDate);
   // A few passes cover the narrow case where the hold changes state between our read and our claim.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const outcome = await runInTransaction(async (session) => {
@@ -263,6 +266,32 @@ async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
 
       // Stock units: the booked quantity x the master's Quantity Reduction (what was held at reservation time).
       const units = claimed.stockQuantity ?? claimed.quantity;
+
+      if (deferred) {
+        // Hold -> Reserve in one step: the held units go back to the pool (so they are not counted twice) and the
+        // reserve row takes over. Physical stock is untouched until the session date arrives.
+        await InventoryReservation.updateOne({ _id: claimed._id }, { $set: { status: "converted" } }, { session });
+        if (wasActive) await releaseReservedStock(claimed.refType, claimed.refId, units, { session });
+        await createReserve(
+          {
+            refType: claimed.refType,
+            refId: claimed.refId,
+            name,
+            code,
+            sessionDate,
+            bookedQuantity: claimed.quantity,
+            stockQuantity: units,
+            reductionFactor: units / claimed.quantity,
+            orderId: claimed.orderId,
+            bookingNumber,
+            reserveKey: `hold:${claimed._id}`,
+            lateConfirmation: !wasActive,
+            userId: bookedByUserId,
+          },
+          { session }
+        );
+        return { done: true, shortfall: 0 };
+      }
       const { deducted, doc } = await deductSold(claimed.refType, claimed.refId, units, {
         releaseReserved: wasActive ? units : 0,
         limitToAvailable: !wasActive,
@@ -301,7 +330,25 @@ async function consumeOne(reservation, name, bookingNumber, bookedByUserId) {
 }
 
 /** A tracked line with no hold row at all: deduct what is free, report the rest. Idempotent per order line. */
-async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, bookedByUserId, factor = 1) {
+async function consumeWithoutHold(line, name, orderId, lineKey, bookingNumber, bookedByUserId, factor = 1, code = "") {
+  if (isFutureSession(line.sessionDate)) {
+    await createReserve({
+      refType: line.refType,
+      refId: line.refId,
+      name,
+      code,
+      sessionDate: line.sessionDate,
+      bookedQuantity: line.quantity,
+      stockQuantity: line.quantity * factor,
+      reductionFactor: factor,
+      orderId,
+      bookingNumber,
+      reserveKey: `late:${orderId}:${lineKey}`,
+      lateConfirmation: true,
+      userId: bookedByUserId,
+    });
+    return [];
+  }
   const requestId = `consume:${orderId}:${lineKey}`;
   if (await InventoryAdjustment.exists({ requestId })) return [];
   return runInTransaction(async (session) => {

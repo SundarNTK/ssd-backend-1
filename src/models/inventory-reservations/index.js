@@ -45,7 +45,7 @@ const inventoryReservationSchema = new mongoose.Schema(
     // "cancelled" → order explicitly abandoned
     status: {
       type: String,
-      enum: ["active", "consumed", "expired", "cancelled"],
+      enum: ["active", "consumed", "expired", "cancelled", "converted"],
       default: "active",
     },
     expiresAt: { type: Date, required: true },

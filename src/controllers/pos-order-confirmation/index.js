@@ -80,6 +80,7 @@ async function listPending(req, res) {
     )
       .populate("customer", "name customerCode")
       .populate("orderId", "orderNumber")
+      .populate("bookingId", "bookingNumber")
       .select("referenceId orderId bookingId customer paymentModeName amount expiresAt transactionDate")
       .sort({ transactionDate: -1 });
 
@@ -92,6 +93,8 @@ async function listPending(req, res) {
         // to now, not the order's.
         referenceId: t.referenceId,
         orderNumber: t.orderId?.orderNumber ?? null,
+        // Only a balance top-up has a booking yet; a first payment is still just an order.
+        bookingNumber: t.bookingId?.bookingNumber ?? null,
         // A pending row already carrying a bookingId is a top-up on an
         // already-confirmed booking; one with none is an order's first
         // payment — same distinction the earlier list-merge design made,
@@ -111,6 +114,7 @@ async function listPending(req, res) {
         (item) =>
           item.referenceId.toLowerCase().includes(search) ||
           item.orderNumber?.toLowerCase().includes(search) ||
+          item.bookingNumber?.toLowerCase().includes(search) ||
           item.customer?.name?.toLowerCase().includes(search)
       );
     }

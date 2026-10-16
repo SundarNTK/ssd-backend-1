@@ -2,6 +2,7 @@ const env = require("./config/env");
 const connectDatabase = require("./config/database");
 const app = require("./app");
 const { startReservationCleanupJob } = require("./utilities/helpers/release-expired-reservations");
+const { startStockReserveJob } = require("./utilities/helpers/process-stock-reserves");
 const { reconcileReservedStock } = require("./controllers/pos/inventory-reservation");
 const { assertPaynowReadyAtStartup } = require("./controllers/payments/paynow/config-validation");
 
@@ -22,6 +23,8 @@ async function start() {
   // then start the expiry job - reservations live in the database, so nothing is lost when the server restarts.
   await reconcileReservedStock().then((r) => console.log(`>>> [inventory] reserved-stock reconciled (${r.fixed} corrected)`)).catch((e) => console.error(">>> [inventory] reconcile failed:", e));
   startReservationCleanupJob();
+  // Stock reserved for future session dates is deducted when the date arrives (and caught up if a day was missed).
+  startStockReserveJob();
 
   // Explicit "0.0.0.0" — Render (and most PaaS hosts) route traffic to the
   // container's external interface, not just loopback, so the default host

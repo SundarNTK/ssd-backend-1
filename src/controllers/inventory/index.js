@@ -17,6 +17,8 @@ const InventoryPending = require("../../models/inventory-pending");
 const AvailableStockHistory = require("../../models/available-stock-history");
 const { applyAdjustmentBatch, InventoryConflict } = require("./adjust");
 const mongoose = require("mongoose");
+const stockReserveApi = require("./stock-reserve-api");
+const StockReserve = require("../../models/stock-reserves");
 
 // Not nested under the /masters group router (see routes/index.js), so
 // authGuard/adminOnly are applied here directly — same as roles/users.
@@ -60,7 +62,7 @@ async function options(req, res) {
  * One row of the Available Stock list. physical = what is on the shelf, reserved = held by pending bookings,
  * available = physical - reserved (what a stock-out may take). `availableQuantity` is the available figure.
  */
-function stockRow(r, refType, threshold, unit, pendingByKey = new Map()) {
+function stockRow(r, refType, threshold, unit, pendingByKey = new Map(), usedByKey = new Map(), futureByKey = new Map(), deficitByKey = new Map()) {
   // Stock units one booked unit uses (Quantity Reduction); Services have no such field and always use 1.
   const reduction = refType === "Service" ? 1 : Math.max(1, Math.floor(Number(r.quantityReduction) || 1));
   const physical = r.currentStock ?? 0;
@@ -76,6 +78,12 @@ function stockRow(r, refType, threshold, unit, pendingByKey = new Map()) {
     reservedQuantity: reserved,
     availableQuantity: Math.max(0, physical - reserved),
     quantityReduction: reduction,
+    // Set aside for future session dates (not yet taken out of stock), and shortages still owed from past ones.
+    futureReservedQuantity: futureByKey.get(`${refType}:${r._id}`) ?? 0,
+    deficitQuantity: deficitByKey.get(`${refType}:${r._id}`) ?? 0,
+    // Everything ever taken out (manual stock-outs and bookings), and so everything ever added: on hand + taken out.
+    usedQuantity: usedByKey.get(`${refType}:${r._id}`) ?? 0,
+    totalStockQuantity: physical + (usedByKey.get(`${refType}:${r._id}`) ?? 0),
     // How many booked units the available stock covers (available / reduction, rounded down).
     bookableQuantity: Math.floor(Math.max(0, physical - reserved) / reduction),
     // The queued ("entered") count not applied yet: +10 then -2 reads +8. Kept in the database.
@@ -100,12 +108,31 @@ async function availableStock(req, res) {
     // Every queued count in one read, keyed "Type:id" (the rows on a page are looked up against it).
     const pendingByKey = new Map((await InventoryPending.find({ pendingQuantity: { $ne: 0 } }).select("refType refId pendingQuantity")).map((p) => [`${p.refType}:${p.refId}`, p.pendingQuantity]));
 
+    // Total ever taken out per item, from the movement log - on hand + this is the overall total ever added.
+    const usedByKey = new Map(
+      (await InventoryAdjustment.aggregate([{ $match: { inventoryType: "Stock Out" } }, { $group: { _id: { t: "$refType", i: "$refId" }, qty: { $sum: "$quantity" } } }])).map(
+        (g) => [`${g._id.t}:${g._id.i}`, g.qty]
+      )
+    );
+
+    // Stock set aside for future session dates, and shortages still owed (see models/stock-reserves).
+    const futureByKey = new Map();
+    const deficitByKey = new Map();
+    for (const g of await StockReserve.aggregate([
+      { $match: { status: { $in: ["upcoming", "processing", "failed", "partial", "shortage"] } } },
+      { $group: { _id: { t: "$refType", i: "$refId", s: "$status" }, units: { $sum: "$stockQuantity" }, short: { $sum: "$shortageQuantity" } } },
+    ])) {
+      const key = `${g._id.t}:${g._id.i}`;
+      if (["upcoming", "processing", "failed"].includes(g._id.s)) futureByKey.set(key, (futureByKey.get(key) ?? 0) + g.units);
+      else deficitByKey.set(key, (deficitByKey.get(key) ?? 0) + g.short);
+    }
+
     async function loadItems() {
       if (type && type !== "Item") return [];
       const filter = Item.notDeletedFilter({ isInventoryApplicable: true, status: 1 });
       if (search) filter.$or = [{ name: search }, { code: search }];
       const rows = await Item.find(filter).select("name code currentStock reservedStock threshold unitOfMeasure quantityReduction").sort({ name: 1 });
-      return rows.map((r) => stockRow(r, "Item", r.threshold, r.unitOfMeasure, pendingByKey));
+      return rows.map((r) => stockRow(r, "Item", r.threshold, r.unitOfMeasure, pendingByKey, usedByKey, futureByKey, deficitByKey));
     }
 
     async function loadServices() {
@@ -113,7 +140,7 @@ async function availableStock(req, res) {
       const filter = Service.notDeletedFilter({ isInventoryRequired: true, status: 1 });
       if (search) filter.$or = [{ name: search }, { code: search }];
       const rows = await Service.find(filter).select("name code currentStock reservedStock thresholdCount").sort({ name: 1 });
-      return rows.map((r) => stockRow(r, "Service", r.thresholdCount, null, pendingByKey));
+      return rows.map((r) => stockRow(r, "Service", r.thresholdCount, null, pendingByKey, usedByKey, futureByKey, deficitByKey));
     }
 
     async function loadGeneralItems() {
@@ -121,7 +148,7 @@ async function availableStock(req, res) {
       const filter = GeneralItem.notDeletedFilter({ isInventoryApplicable: true, status: 1 });
       if (search) filter.$or = [{ name: search }, { code: search }];
       const rows = await GeneralItem.find(filter).select("name code currentStock reservedStock threshold quantityReduction").sort({ name: 1 });
-      return rows.map((r) => stockRow(r, "GeneralItem", r.threshold, null, pendingByKey));
+      return rows.map((r) => stockRow(r, "GeneralItem", r.threshold, null, pendingByKey, usedByKey, futureByKey, deficitByKey));
     }
 
     const [items, services, generalItems] = await Promise.all([loadItems(), loadServices(), loadGeneralItems()]);
@@ -194,7 +221,7 @@ async function history(req, res) {
 
     const refType = req.query.refType; // "Item" | "Service" | "GeneralItem" | undefined
     if (["Item", "Service", "GeneralItem"].includes(refType)) filter.refType = refType;
-    if (["Inventory Adjustment", "Available Stock", "Booking"].includes(req.query.source)) filter.source = req.query.source;
+    if (["Inventory Adjustment", "Available Stock", "Booking", "Stock Reserve"].includes(req.query.source)) filter.source = req.query.source;
 
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -426,6 +453,14 @@ router.get("/out-of-stock", requirePermission("inventory", "view"), outOfStock);
 router.get("/history", requirePermission("inventory", "view"), history);
 router.post("/adjustments", requirePermission("inventory", "fullAccess"), validateBody(createAdjustmentSchema), createAdjustment);
 router.get("/stock-summary", requirePermission("inventory", "view"), stockSummary);
+// Stock Reserve (date-wise reservations for future sessions) and the Stock Hold list - see ./stock-reserve-api.
+router.get("/stock-reserves/summary", requirePermission("inventory", "view"), stockReserveApi.summary);
+router.post("/stock-reserves/process-due", requirePermission("inventory", "fullAccess"), stockReserveApi.processDue);
+router.get("/stock-reserves", requirePermission("inventory", "view"), stockReserveApi.list);
+router.get("/stock-reserves/:id", requirePermission("inventory", "view"), stockReserveApi.detail);
+router.post("/stock-reserves/:id/retry", requirePermission("inventory", "fullAccess"), stockReserveApi.retry);
+router.post("/stock-reserves/:id/cancel", requirePermission("inventory", "fullAccess"), stockReserveApi.cancel);
+router.get("/stock-holds", requirePermission("inventory", "view"), stockReserveApi.holds);
 router.get("/available-stock-history", requirePermission("inventory", "view"), availableStockHistory);
 router.post("/pending", requirePermission("inventory", "fullAccess"), validateBody(queuePendingSchema), queueEntry);
 router.post("/pending/apply", requirePermission("inventory", "fullAccess"), validateBody(applyPendingSchema), applyQueue);

@@ -9,6 +9,7 @@
  * `<batchId>:<n>` key, so a double click, a retried request or a replayed response applies it exactly once.
  */
 const InventoryAdjustment = require("../../models/inventory-adjustments");
+const { fulfilDeficits } = require("../../common/utils/stock-reserve");
 const {
   REF_MODELS,
   trackedFilter,
@@ -105,6 +106,8 @@ async function applyAdjustmentBatch({ batchId, entries, userId = null, source = 
             { session }
           );
           created.push(row);
+          // New stock settles outstanding Stock Reserve shortages first; only the rest stays as available stock.
+          if (e.inventoryType === "Stock In") await fulfilDeficits({ refType: e.refType, refId: e.refId, incoming: e.quantity, session, userId });
         }
         return created;
       } catch (err) {
