@@ -61,6 +61,8 @@ async function options(req, res) {
  * available = physical - reserved (what a stock-out may take). `availableQuantity` is the available figure.
  */
 function stockRow(r, refType, threshold, unit, pendingByKey = new Map()) {
+  // Stock units one booked unit uses (Quantity Reduction); Services have no such field and always use 1.
+  const reduction = refType === "Service" ? 1 : Math.max(1, Math.floor(Number(r.quantityReduction) || 1));
   const physical = r.currentStock ?? 0;
   const reserved = r.reservedStock ?? 0;
   return {
@@ -73,6 +75,9 @@ function stockRow(r, refType, threshold, unit, pendingByKey = new Map()) {
     physicalQuantity: physical,
     reservedQuantity: reserved,
     availableQuantity: Math.max(0, physical - reserved),
+    quantityReduction: reduction,
+    // How many booked units the available stock covers (available / reduction, rounded down).
+    bookableQuantity: Math.floor(Math.max(0, physical - reserved) / reduction),
     // The queued ("entered") count not applied yet: +10 then -2 reads +8. Kept in the database.
     pendingQuantity: pendingByKey.get(`${refType}:${r._id}`) ?? 0,
   };
@@ -99,7 +104,7 @@ async function availableStock(req, res) {
       if (type && type !== "Item") return [];
       const filter = Item.notDeletedFilter({ isInventoryApplicable: true, status: 1 });
       if (search) filter.$or = [{ name: search }, { code: search }];
-      const rows = await Item.find(filter).select("name code currentStock reservedStock threshold unitOfMeasure").sort({ name: 1 });
+      const rows = await Item.find(filter).select("name code currentStock reservedStock threshold unitOfMeasure quantityReduction").sort({ name: 1 });
       return rows.map((r) => stockRow(r, "Item", r.threshold, r.unitOfMeasure, pendingByKey));
     }
 
@@ -115,7 +120,7 @@ async function availableStock(req, res) {
       if (type && type !== "GeneralItem") return [];
       const filter = GeneralItem.notDeletedFilter({ isInventoryApplicable: true, status: 1 });
       if (search) filter.$or = [{ name: search }, { code: search }];
-      const rows = await GeneralItem.find(filter).select("name code currentStock reservedStock threshold").sort({ name: 1 });
+      const rows = await GeneralItem.find(filter).select("name code currentStock reservedStock threshold quantityReduction").sort({ name: 1 });
       return rows.map((r) => stockRow(r, "GeneralItem", r.threshold, null, pendingByKey));
     }
 
