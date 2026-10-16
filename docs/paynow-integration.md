@@ -8,6 +8,137 @@ possible, adapted to SSD-Backend's single-entity POS flow
 (`controllers/pos-orders`, `models/pos-orders` / `pos-bookings` /
 `pos-transactions`).
 
+## Modes, configuration and what is still open (October 2026)
+
+> This section is the current design. Where the older sections further down
+> talk about a `dummy` or `java` engine and a default of `dummy`, this
+> replaces them: see "Modes" below.
+
+### Modes — `PAYNOW_MODE`
+
+| Mode | Set by | QR code | Confirmation | Real money |
+|---|---|---|---|---|
+| `development` | `PAYNOW_MODE=development`, or unset when `NODE_ENV` is not `production` | A mock QR: real amount and reference, but a fixed fake merchant (`SSD TEST - DO NOT PAY`, proxy `MOCKNOTAUEN`). The `PAYNOW_*` values are never used, so even a real UEN left in the environment cannot make a payable QR. | `POST /api/v1/payments/paynow/mock/icn` (staff login + `admin-booking` full access) runs the same code a real ICN would, for scenarios `success`, `pending`, `duplicate`, `wrong_amount`, `expired`, `cancelled`, `unknown_reference`. | No |
+| `production` | `PAYNOW_MODE=production` | The real QR from the engine named in `PAYNOW_QR_ENGINE` (`jar` or `native`). | DBS's ICN only, after decrypt + signature check + parse + the pending-payment checks. The mock route refuses. | Yes |
+| disabled | `PAYNOW_MODE` unset while `NODE_ENV=production` | None. QR requests and the ICN route refuse. | None | No |
+
+A `PAYNOW_MODE` that is set to anything else is an error at startup, never a
+silent default.
+
+**Production never falls back.** If the jar fails or a value is missing, the
+request fails with the reason and the pending payment is cancelled; it does
+not produce a mock QR. At startup, in production mode the server checks
+every required setting, that `PAYNOW_CREDENTIALS_ARE_SSD_OWN=true`, that both
+key files exist and parse (the private key must not be passphrase
+protected), and for `jar` that the jar and Java are present. If anything is
+wrong the process **does not start** and prints the full list.
+
+### What each part does
+
+```
+generate-qr/engines.js       the two ways to draw the QR: jar, native
+generate-qr/build-payload.js builds the QR text (EMVCo/SGQR) for `native` and `development`
+provider/                    one interface, three implementations (mock, live, disabled), chosen by mode.js
+mode.js                      PAYNOW_MODE -> development | production | disabled
+config-validation.js         the production settings check + startup gate
+keys.js                      where the PGP key files are
+icn-response/decrypt-response.js  decrypt with our private key AND require a valid DBS signature
+icn-response/parse-icn.js    reads the decrypted JSON; decides settled / pending / unusable
+icn-response/process-icn.js  routes it to the payment (dispatch.js) and logs the outcome
+models/paynow-icn-logs       one row per ICN handled (settled, duplicate, pending, rejected)
+mock-confirm.js              development-only stand-in for DBS
+```
+
+### The JAR file — what it is (checked, not assumed)
+
+`public/Paynowsdk/dist/PayQRSDK.jar` is a 1.5 KB command-line wrapper
+(`payqrsdk.PayQRSDK`, built with Ant on Java 8). It does one thing: it fills a
+`com.dbs.sgqr.generator.io.PayNow` object from its arguments, calls
+`QRGenerator.generateSGQR(...)`, and prints the QR image as base64. The real
+work is in `lib/SGQRGenerator-1.6.jar`, which is **DBS's own library**
+(`com/dbs/sgqr/generator/...`: `QRGenerator`, `PayNowHelper`,
+`PayNowValidator`, `SGQRValidator`, `CrcUtil`, `ImageGenerator`, error-code
+tables), bundled with ZXing for drawing the QR and a few unrelated libraries.
+
+It builds the QR text, validates it against DBS's PayNow/SGQR rules, adds the
+CRC checksum, and draws the image with the PayNow logo and colour. It does
+**not** sign, encrypt or call the network. It is not involved in the ICN.
+
+**Can Node.js replace it?** For the text, yes: `native` is the same format and
+reproduces the jar's output exactly. This was checked by running the jar
+(Java 26) with a fake merchant, decoding its QR, and comparing field by field
+(`generate-qr/__tests__/jar-parity.test.js` keeps that result as a test). Two
+real differences were found and are now settings, defaulting to what the jar
+writes:
+
+| Field | Spec wording | DBS jar | Setting |
+|---|---|---|---|
+| Tag 00, payload format indicator | `01` | `00` | `PAYNOW_PAYLOAD_FORMAT_INDICATOR` |
+| Tag 26.04, proxy expiry | `YYYYMMDD` | `YYYYMMDDHHmmss` | `PAYNOW_PROXY_EXPIRY_FORMAT` |
+
+What `native` does **not** do: the jar's validator (field rules and error
+codes) and the logo/colour styling. Whether DBS requires the jar or accepts a
+QR built to the standard is a question for the PayNow team; until they
+answer, `jar` is the safe choice and `native` is ready if they allow it.
+Using `jar` in the Docker image means adding a Java runtime to it.
+
+### ICN decoding — same approach as HEB, with two additions
+
+HEB's `decrypt-resposne.js` decrypts with our private key and passes DBS's
+public key as `verificationKeys`, but **never checks the result**. In
+openpgp, a bad or missing signature does not make `decrypt` fail; it must be
+awaited from `signatures[].verified`. Without that check anyone holding our
+(public) key could forge a "payment received" message. SSD now requires at
+least one verified signature, otherwise the message is rejected
+(`icn-response/__tests__/decrypt-response.test.js`, real generated keys).
+
+After decrypting, `parse-icn.js` rules (fields follow HEB's handling of DBS's
+messages; **not yet confirmed for SSD**):
+
+- not JSON / not an object / no `txnInfo` / no `customerReference` -> rejected
+- `customerReference` must look like a reference this system issues (13 upper-case letters/digits)
+- `txnRefId` present -> `settled`; absent -> `pending` (nothing is confirmed)
+- amount, if present, must be a positive number; currency, if present, must be SGD
+- a `settled` message without an amount is rejected (it could not be checked)
+
+Decoding is **not** proof of payment. A settled message is then checked
+against the pending payment we created: it must exist, still be pending, not
+be expired (15 minutes) or cancelled, and the amount must equal the fixed one.
+A repeat of an already-paid payment is a no-op. Every ICN, accepted or
+refused, is written to `paynow_icn_logs`.
+
+### Status of each part
+
+| Part | State |
+|---|---|
+| Mode switch, provider interface, mock QR, mock confirm | Done and tested |
+| Production startup checks (settings, keys, Java) | Done and tested |
+| QR text builder (`native`) vs the jar | Done; matches the jar exactly with the jar's two format choices |
+| `jar` engine | Works with the jar in the repo (run with Java 26). Needs Java in the server image for production. |
+| ICN decrypt + signature check | Done and tested with generated keys |
+| ICN parsing, outcome handling, ICN log | Done and tested; **field names are HEB's, pending DBS** |
+| Booking/payment update on confirmation | Existing `confirmPosPayment` (unchanged) |
+| Real merchant values, keys, ICN URL registration | **Waiting for the PayNow team** |
+| End-to-end test against DBS UAT | **Not possible until the above** |
+
+### Pending from the PayNow team
+
+1. The temple's UEN with any suffix, merchant name (<= 25 chars), city, category code, and confirmation of proxy type, fixed amount (`0`) and one-time QR (`12`).
+2. Whether the jar is mandatory, or a standard-conforming QR is accepted; the jar itself if mandatory.
+3. Tag 00 value (`00` vs `01`) and tag 26.04 format (`datetime` vs `date`); the maximum reference length (ours is 13).
+4. Key exchange: the temple creates its key pair and gives DBS the public half; DBS's public key for UAT and for live; which file is which; **confirmation that every ICN is signed**.
+5. ICN details: exact body (`{"data": "<PGP>"}` or raw), field names, how "completed" is signalled, the response DBS expects, retry and duplicate behaviour, source IPs.
+6. UAT test method and sign-off, settlement reports, refund and expiry rules, fees and limits, support contact.
+
+### Setting it up once the values arrive
+
+1. Put the two key files on the server in a protected folder, mounted read-only into the container; never in git.
+2. Set every `PAYNOW_*` value in `backend.env` (see `.env.example`), `PAYNOW_QR_ENGINE`, and `PAYNOW_CREDENTIALS_ARE_SSD_OWN=true`.
+3. For `jar`: add a Java runtime to the Docker image.
+4. Set `PAYNOW_MODE=production` and restart; the startup log must say `PayNow mode: production`.
+5. Register `https://api.sivadurga.com/api/v1/payments/paynow/icn-response` with DBS; allow only DBS's IPs on that path in Nginx and keep rate limits on.
+6. Test on DBS UAT, then live. Reconcile daily against DBS's report.
+
 ## How the whole flow works
 
 PayNow QR payment is **two completely separate, asynchronous steps** — this
@@ -281,7 +412,7 @@ issues SSD's PayNow Corporate service) for:
 
 ## Files
 
-- `src/controllers/payments/paynow/generate-qr/` — `index.js` (the standalone HTTP route, top-ups only), `render.js` (the actual QR-rendering logic + `assertPaynowConfigured`, shared with `controllers/pos-orders`' `buildPaynowQrForOrder` so a brand new order's first QR can be built in-process without a require cycle), `find-java.js`
+- `src/controllers/payments/paynow/generate-qr/` — `index.js` (the standalone HTTP route, top-ups only), `render.js` (the facade `assertPaynowConfigured` / `renderQrImage`, shared with `controllers/pos-orders`' `buildPaynowQrForOrder` so a brand new order's first QR can be built in-process without a require cycle), `engines.js` (jar / native), `build-payload.js`, `find-java.js`; `../provider/` (mock / live / disabled) and `../mode.js` choose which runs
 - `src/controllers/payments/paynow/icn-response/` — the webhook (`index.js`, `decrypt-response.js`)
 - `src/controllers/payments/dispatch.js` — the shared prefix-routed confirmation dispatcher both this and future payment modes (NETS) call into
 - `src/controllers/payments/index.js` — routes: `POST /paynow/generate-qr` (operator-authenticated), `POST /paynow/icn-response` (public)

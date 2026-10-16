@@ -13,6 +13,7 @@ const requirePermission = require("../../common/middleware/require-permission");
 
 const generatePaynowQr = require("./paynow/generate-qr");
 const icnResponse = require("./paynow/icn-response");
+const mockPaynowConfirm = require("./paynow/mock-confirm");
 const netsCallback = require("./nets/callback");
 
 const router = express.Router();
@@ -36,6 +37,20 @@ router.post(
 // tolerates) — scoped to this one route so every other /payments route
 // keeps the app's normal JSON body parsing untouched.
 router.post("/paynow/icn-response", express.text({ type: () => true, limit: "1mb" }), icnResponse);
+
+// ── PayNow mock confirmation — development mode ONLY ───────────────────
+// Stands in for DBS's ICN so the booking flow, duplicate/expired/wrong-
+// amount handling and the confirmation screens can be exercised without a
+// real PayNow connection. Refuses to do anything unless PAYNOW_MODE is
+// "development" (see paynow/mock-confirm.js), and needs a signed-in staff
+// member with the same permission as generating a QR.
+router.post(
+  "/paynow/mock/icn",
+  authGuard,
+  adminOnly,
+  requirePermission("admin-booking", "fullAccess"),
+  mockPaynowConfirm
+);
 
 // ── NETS callback — public, called by the local Nets-Service EXE ───────
 // Not admin-JWT-gated (the EXE holds no such session) — a shared-secret

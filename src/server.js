@@ -3,8 +3,14 @@ const connectDatabase = require("./config/database");
 const app = require("./app");
 const { startReservationCleanupJob } = require("./utilities/helpers/release-expired-reservations");
 const { reconcileReservedStock } = require("./controllers/pos/inventory-reservation");
+const { assertPaynowReadyAtStartup } = require("./controllers/payments/paynow/config-validation");
 
 async function start() {
+  // PayNow: a production-mode server that is missing any setting, key file or
+  // (for the jar engine) Java refuses to start, instead of failing later in
+  // front of a customer. Mock and off modes just log which one is active.
+  console.log(`>>> ${await assertPaynowReadyAtStartup()}`);
+
   await connectDatabase();
 
   // Start the inventory-reservation expiry cleanup job.

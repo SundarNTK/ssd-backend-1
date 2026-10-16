@@ -12,23 +12,28 @@
  * webhook.
  *
  * Mounted unauthenticated (see controllers/payments/index.js) — DBS calls
- * this directly, it never carries this app's own auth token. The PGP
- * decrypt+verify step (decrypt-response.js) is what stands in for auth
- * here: only someone holding DBS's signing key could have produced a
- * message our public key verifies.
+ * this directly, it never carries this app's own auth token. What stands in
+ * for auth is the PGP layer (decrypt-response.js): the message must be
+ * encrypted to our key AND signed by DBS. Only then is it parsed
+ * (parse-icn.js) and matched to the pending payment (process-icn.js).
+ *
+ * Only runs when PayNow is switched on (PAYNOW_MODE, ../mode.js). On a
+ * server where it is off the route answers with an error and decrypts
+ * nothing.
  *
  * `customerReference` in the decrypted payload is exactly the `referenceId`
- * generate-qr embedded in the QR as `Event_Order_Ref_No` — that's the
- * field the shared confirmation dispatcher (controllers/payments/dispatch)
- * uses to route this settlement back to the right origin module (POS
- * today). Idempotency (a duplicate ICN for an already-settled reference)
- * is handled inside that dispatch target, not here — see
- * controllers/pos-orders' confirmPosPayment().
+ * generate-qr embedded in the QR as the bill reference — that's the field
+ * the shared confirmation dispatcher (controllers/payments/dispatch) uses
+ * to route this settlement back to the right origin module (POS today).
+ * Idempotency (a duplicate ICN for an already-settled reference) is handled
+ * inside that dispatch target, not here — see controllers/pos-orders'
+ * confirmPosPayment().
  */
 
 const { responseHandler, exceptionHandler } = require("../../../../utilities/handlers");
-const { dispatchPaymentConfirmation } = require("../../dispatch");
+const { getPaynowMode } = require("../mode");
 const decryptIcnResponse = require("./decrypt-response");
+const { processDecryptedIcn } = require("./process-icn");
 
 /**
  * DBS's exact request shape for this webhook isn't confirmed yet (no API
@@ -63,44 +68,29 @@ function extractArmoredMessage(req) {
 
 async function icnResponse(req, res) {
   try {
+    if (getPaynowMode() === "disabled") {
+      return exceptionHandler({ res, error: "PayNow is not enabled on this server.", statusCode: 503 });
+    }
+
     const armoredMessage = extractArmoredMessage(req);
     if (!armoredMessage) throw "No PayNow ICN payload found in the request.";
 
+    // Decrypts AND requires a valid DBS signature — throws otherwise.
     const decryptedJson = await decryptIcnResponse(armoredMessage);
-    const decrypted = JSON.parse(decryptedJson);
 
-    const txnInfo = decrypted?.txnInfo;
-    if (!txnInfo) throw "ICN payload carried no txnInfo — nothing to confirm.";
+    const result = await processDecryptedIcn(decryptedJson, { source: "dbs" });
 
-    const { customerReference, txnRefId, amtDtls } = txnInfo;
-    if (!customerReference) throw "ICN payload carried no customerReference — cannot identify the order.";
-
-    // txnRefId only appears once DBS considers the transfer actually
-    // completed — the same signal HEB's own handler treats as "paid" vs
-    // "still pending" (a notification can legitimately arrive before
-    // that). Nothing is confirmed here for the still-pending case.
-    if (!txnRefId) {
+    if (result.status === "pending") {
       return responseHandler({
         res,
-        response: { customerReference, status: "pending" },
+        response: result,
         successMessage: "ICN received — transaction not yet completed.",
       });
     }
-
-    const amount = amtDtls?.txnAmt != null ? Number(amtDtls.txnAmt) : undefined;
-
-    const result = await dispatchPaymentConfirmation(customerReference, {
-      amount,
-      gatewayReference: txnRefId,
-      processedBy: null,
-    });
-
     return responseHandler({
       res,
-      response: { customerReference, ...result },
-      successMessage: result.alreadyProcessed
-        ? "ICN received — already processed."
-        : "Payment confirmed from PayNow ICN.",
+      response: result,
+      successMessage: result.alreadyProcessed ? "ICN received — already processed." : "Payment confirmed from PayNow ICN.",
     });
   } catch (error) {
     return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });

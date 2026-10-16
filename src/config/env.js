@@ -104,19 +104,35 @@ module.exports = {
    */
   PAYNOW_CREDENTIALS_ARE_SSD_OWN: (process.env.PAYNOW_CREDENTIALS_ARE_SSD_OWN ?? "false") === "true",
   /**
-   * "dummy"  → builds a real EMVCo-structured PayNow payload in pure JS
-   *            (build-payload.js) and renders it with the `qrcode` npm
-   *            package — no Java, no bank-signed SDK. Real field values
-   *            (merchant name, proxy, amount, referenceId), just not run
-   *            through DBS's own certified generation pipeline.
-   * "java"   → the original path: shells out to PayQRSDK.jar
-   *            (find-java.js + the jar under public/Paynowsdk/dist) —
-   *            requires a JRE on this machine and the real DBS-issued jar.
-   * Defaults to "dummy" so the QR can be seen/tested without Java or the
-   * bank SDK being set up at all. Switch to "java" once both of those are
-   * actually available and you want the certified generation path.
+   * Integration mode — see controllers/payments/paynow/mode.js.
+   *   "development" → mock QR (a clearly fake, non-payable merchant) and the
+   *                   mock-confirmation route; no real money can move.
+   *   "production"  → the real PayNow integration. Every PAYNOW_* value below
+   *                   is validated at startup and the server refuses to start
+   *                   if one is missing — it never falls back to a mock.
+   *   (unset)       → "development" outside NODE_ENV=production, and
+   *                   "disabled" inside it, so a server that was never set up
+   *                   for PayNow cannot show a QR at all.
    */
-  PAYNOW_QR_ENGINE: process.env.PAYNOW_QR_ENGINE || "dummy",
+  PAYNOW_MODE: (process.env.PAYNOW_MODE || "").trim().toLowerCase(),
+  /**
+   * How a production QR is built (ignored in development mode).
+   *   "jar"    → shells out to DBS's PayQRSDK.jar (needs a JRE and the jar
+   *              under public/Paynowsdk/dist). "java" is accepted as an alias.
+   *   "native" → builds the same payload in JS (build-payload.js) and draws it
+   *              with the `qrcode` package. Its output has been checked
+   *              byte-for-byte against the jar's, but whether DBS accepts it
+   *              for production is still to be confirmed with them.
+   * Production must name one explicitly; there is no default.
+   */
+  PAYNOW_QR_ENGINE: (process.env.PAYNOW_QR_ENGINE || "").trim().toLowerCase(),
+  // Tag 00 of the QR payload. The EMVCo spec says "01"; DBS's own jar writes
+  // "00". Defaults to what the jar writes — confirm with DBS.
+  PAYNOW_PAYLOAD_FORMAT_INDICATOR: process.env.PAYNOW_PAYLOAD_FORMAT_INDICATOR || "00",
+  // Tag 26.04 (proxy expiry): "datetime" = YYYYMMDDHHmmss (what the jar
+  // writes), "date" = YYYYMMDD. Confirm with DBS.
+  PAYNOW_PROXY_EXPIRY_FORMAT: process.env.PAYNOW_PROXY_EXPIRY_FORMAT || "datetime",
+  PAYNOW_PROXY_EXPIRY_DAYS: Number(process.env.PAYNOW_PROXY_EXPIRY_DAYS) || 365,
   PAYNOW_MERCHANT_CATEGORY_CODE: process.env.PAYNOW_MERCHANT_CATEGORY_CODE || "",
   PAYNOW_TXN_CURRENCY: process.env.PAYNOW_TXN_CURRENCY || "",
   PAYNOW_COUNTRY_CODE: process.env.PAYNOW_COUNTRY_CODE || "",

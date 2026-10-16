@@ -65,26 +65,38 @@ function buildAdditionalData({ referenceId }) {
   return tlv("01", referenceId);
 }
 
-/** YYYYMMDD, local time, N days from now — the Proxy Expiry Date sub-field's spec'd format. */
-function formatExpiryDate(daysFromNow) {
-  const date = new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000);
+/**
+ * The Proxy Expiry Date sub-field, local time, N days from now.
+ *   "date"     → YYYYMMDD         (the EMVCo/SGQR spec wording)
+ *   "datetime" → YYYYMMDDHHmmss   (what DBS's own PayQRSDK.jar writes)
+ * Which one DBS wants is an open question for them — see
+ * docs/paynow-integration.md — so it is configuration, not a constant.
+ */
+function formatExpiryDate(daysFromNow, format = "date", now = Date.now()) {
+  const date = new Date(now + daysFromNow * 24 * 60 * 60 * 1000);
   const pad = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+  const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+  if (format === "datetime") return `${day}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  return day;
 }
 
 /**
  * @param {object} config  every PAYNOW_* field from config/env.js, plus:
  * @param {string} config.referenceId  the pos_order's 13-char reference id — becomes the QR's merchant reference (EMVCo tag 62.01)
  * @param {number} config.amount       the amount this QR is for
+ * @param {string} [config.payloadFormatIndicator]  tag 00; "01" per the spec (default), "00" is what DBS's jar writes
+ * @param {"date"|"datetime"} [config.expiryFormat] tag 26.04 format, see formatExpiryDate (default "date")
+ * @param {number} [config.expiryDays]              how far ahead the proxy expiry is set (default 365)
+ * @param {string} [config.expiryDate]              an exact tag 26.04 value; overrides the two above (used by tests)
  * @returns {string} the full EMVCo payload string, ready to render as a QR code
  */
 function buildPaynowQrPayload(config) {
   const merchantName = String(config.merchantName).slice(0, MERCHANT_NAME_MAX_LENGTH);
   const merchantCity = String(config.merchantCity).slice(0, MERCHANT_CITY_MAX_LENGTH);
-  const expiryDate = formatExpiryDate(365);
+  const expiryDate = config.expiryDate || formatExpiryDate(config.expiryDays || 365, config.expiryFormat || "date");
 
   let payload = "";
-  payload += tlv("00", "01");
+  payload += tlv("00", config.payloadFormatIndicator || "01");
   payload += tlv("01", config.pointOfInitiation);
   payload += tlv(
     "26",
@@ -107,4 +119,4 @@ function buildPaynowQrPayload(config) {
   return payload + crc16CcittFalse(payload);
 }
 
-module.exports = { buildPaynowQrPayload, crc16CcittFalse, tlv };
+module.exports = { buildPaynowQrPayload, crc16CcittFalse, tlv, formatExpiryDate };
