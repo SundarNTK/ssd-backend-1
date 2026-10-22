@@ -1,6 +1,5 @@
 const express = require("express");
 const requireTicketImage = require("../../common/middleware/require-ticket-image");
-const requireSessionCutoff = require("../../common/middleware/require-session-cutoff");
 const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const { uploadEventImages, hydrateMultipartBody } = require("../../common/middleware/upload");
@@ -334,7 +333,6 @@ router.post(
   hydrateMultipartBody,
   validateBody(createSchema),
   requireTicketImage(Event),
-  requireSessionCutoff(Event, "futureBookingCutOffDate"),
   create
 );
 router.put(
@@ -344,7 +342,6 @@ router.put(
   hydrateMultipartBody,
   validateBody(updateSchema),
   requireTicketImage(Event),
-  requireSessionCutoff(Event, "futureBookingCutOffDate"),
   update
 );
 router.delete("/events/:id", requirePermission("events", "fullAccess"), remove);

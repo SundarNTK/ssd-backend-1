@@ -640,7 +640,7 @@ async function listPosEvents(req, res) {
       .populate({ path: "category", select: "name color" })
       .populate({ path: "deityMapping", select: "name tamilName image color", options: { sort: { displayOrder: 1, name: 1 } } })
       .select(
-        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
+        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions recurringRequired futureBookingCutOffDate bookingCutoffDate"
       )
       .sort({ startDate: 1, displayOrder: 1, name: 1 })
       .lean();
@@ -650,6 +650,8 @@ async function listPosEvents(req, res) {
     const items = events
       .map((e) => ({
         ...e,
+        // An event is session-based when it has a Future Booking Cut-off Date.
+        sessionRequired: !!e.futureBookingCutOffDate,
         // The booking screens read the session's last day as `sessionCutoffDate`.
         sessionCutoffDate: e.futureBookingCutOffDate ?? null,
         slotDetails: (e.slotDetails || [])

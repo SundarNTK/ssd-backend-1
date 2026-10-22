@@ -6,6 +6,7 @@ const env = require("./config/env");
 const routes = require("./routes");
 const { exceptionHandler } = require("./utilities/handlers");
 const { apiLimiter } = require("./common/middleware/rate-limit");
+const accessCheckRoutes = require("./controllers/access-check");
 
 const app = express();
 
@@ -15,6 +16,11 @@ const app = express();
 // either share one bucket across every visitor or rate-limit nobody
 // correctly, depending on how express-rate-limit falls back.
 app.set("trust proxy", 1);
+
+// Nginx asks this before letting a visit reach the admin or POS site (docs/ip-access-control.md).
+// Mounted ahead of the request log and the rate limiter on purpose: it is called for every file of
+// every admin/POS page load, and neither logging nor counting those against the visitor is wanted.
+app.use(`${env.API_PREFIX}/access`, accessCheckRoutes);
 
 const allowedOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
 

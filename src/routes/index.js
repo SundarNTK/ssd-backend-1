@@ -45,6 +45,7 @@ const hallBookingRoutes = require("../controllers/hall-bookings");
 const hallBookingManageRoutes = require("../controllers/hall-bookings/manage");
 const cmsRoutes = require("../controllers/cms");
 const publicPortalRoutes = require("../controllers/public-portal");
+const ipAccessRoutes = require("../controllers/ip-access");
 
 const router = express.Router();
 
@@ -100,6 +101,12 @@ notificationsRouter.use(authGuard, adminOnly);
 notificationsRouter.use(emailTemplateRoutes); // admin-side: email template master
 notificationsRouter.use(emailTemplateMappingRoutes); // admin-side: email template mapping master
 router.use("/notifications", notificationsRouter);
+
+// Allow list for the admin and POS sites — System Admin only (checked inside the controller too).
+const accessControlRouter = express.Router();
+accessControlRouter.use(authGuard, adminOnly);
+accessControlRouter.use(ipAccessRoutes);
+router.use("/access-control", accessControlRouter);
 
 router.use("/roles", roleRoutes); // admin-side: role master, permissions, module list
 router.use("/users", userRoutes); // admin-side: user master

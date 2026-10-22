@@ -49,12 +49,12 @@ async function resolveEventLine(line, { portal }) {
   else filter.posVisibility = true;
 
   const event = await Event.findOne(filter).select(
-    "name code salePrice gstClassification generalLedger deityMapping isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers sessionRequired futureBookingCutOffDate"
+    "name code salePrice gstClassification generalLedger deityMapping isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers futureBookingCutOffDate"
   ).populate("generalLedger", "gstType");
   if (!event) throw "An event in the cart is no longer available.";
 
-  // ── session day (only when the event has a session rule) ──
-  const sessionDate = resolveSessionDate(event, line);
+  // ── session day (an event has a session rule when it has a Future Booking Cut-off Date) ──
+  const sessionDate = resolveSessionDate({ name: event.name, futureBookingCutOffDate: event.futureBookingCutOffDate, sessionRequired: !!event.futureBookingCutOffDate }, line);
 
   // ── slot ──────────────────────────────────────────────────────────────
   // Every event is booked into a slot.

@@ -171,4 +171,22 @@ module.exports = {
    * it to be set.
    */
   NETS_CALLBACK_SECRET: process.env.NETS_CALLBACK_SECRET || "sdfsfdsfadfsafs",
+
+  /**
+   * IP allow list for the admin and POS sites — see controllers/ip-access and
+   * docs/ip-access-control.md. The list itself and its mode (off / report /
+   * enforce) are edited on screen by a System Admin and live in the database.
+   * These two exist OUTSIDE the screen on purpose, as the way back in:
+   *
+   * IP_ACCESS_FORCE_OFF=true      emergency switch: the restriction is off
+   *                               whatever the screen says. Set it through
+   *                               Session Manager and restart the backend.
+   * IP_ACCESS_ALWAYS_ALLOWED      comma-separated addresses/ranges that are
+   *                               always let in (the temple's address, an
+   *                               administrator's) and cannot be removed from
+   *                               the screen, so a mistake there can never
+   *                               lock everybody out.
+   */
+  IP_ACCESS_FORCE_OFF: (process.env.IP_ACCESS_FORCE_OFF ?? "false") === "true",
+  IP_ACCESS_ALWAYS_ALLOWED: process.env.IP_ACCESS_ALWAYS_ALLOWED || "",
 };

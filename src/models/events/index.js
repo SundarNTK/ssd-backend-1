@@ -32,10 +32,8 @@ const eventSchema = new mongoose.Schema({
   image: { type: String, default: null }, // full Cloudinary secure_url
   // Print this record's picture under it on the ticket (also needs "Print image on ticket" = Yes in Print Split Setting).
   printImage: { type: Boolean, default: false },
-  // Session rule: a master with sessionRequired is booked for a day, today up to its Future Booking Cut-off Date (common/utils/session-rule.js).
-  sessionRequired: { type: Boolean, default: false },
   recurringRequired: { type: Boolean, default: false },
-  // Last day the event can be booked; after it the event is hidden from Admin Booking and the POS (common/utils/booking-cutoff.js).
+  // Last day the event can be booked. When set, the event follows the session rule: booked for a day, today up to this date (common/utils/session-rule.js). After it the event is hidden from Admin Booking and the POS (common/utils/booking-cutoff.js).
   futureBookingCutOffDate: { type: Date, default: null },
   // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
   ticketImage: { type: String, default: null },
