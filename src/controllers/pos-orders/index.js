@@ -164,7 +164,7 @@ async function createOrder(req, res) {
     const { error, value } = createOrderSchema.validate(req.body);
     if (error) throw error.details[0].message;
 
-    const { customerId, lines, paymentModeId, paidAmount, customerDetails } = value;
+    const { customerId, lines, paymentModeId, paidAmount, customerDetails, remarks } = value;
     const portal = req.posPortal === "admin" ? "admin" : "pos";
     const itemVisField = portal === "admin" ? "adminBookingVisibility" : "posAvailability";
     const svcVisField = portal === "admin" ? "adminBookingVisibility" : "isPosAvailable";
@@ -320,6 +320,7 @@ async function createOrder(req, res) {
         orderNumber,
         customer: customerId,
         customerDetails: customerDetailsFor(customer, customerDetails),
+        remarks: remarks || "",
         lines: resolvedLines.map((l) => ({
           refType: l.refType,
           refId: l.refId,
@@ -465,6 +466,7 @@ async function writePosBookingFromOrder(order, paidAmount, paymentOverride = {})
       orderId: order._id,
       customer: customerId,
       customerDetails: order.customerDetails ?? customerDetailsFor(order.customer, null),
+      remarks: order.remarks || "",
       lines: order.lines,
       subtotal: order.subtotal,
       gstAmount: order.gstAmount,
@@ -715,7 +717,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber referenceId")
         .select(
-          "bookingNumber orderId customer customerDetails lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
+          "bookingNumber orderId customer customerDetails remarks lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         // listWindow lets the Admin Panel's merged ledger ask for an exact slice.
@@ -761,6 +763,7 @@ async function listBookings(req, res) {
           : null,
         // As typed at the desk when it was booked (name / mobile / email) - see the booking's customerDetails.
         customerDetails: b.customerDetails ?? null,
+        remarks: b.remarks ?? "",
         // The session day(s) the booking was made for (items/services/events with a session rule).
         sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
         // Each booked session day with its AM / PM half (session null when the master has no sessions).

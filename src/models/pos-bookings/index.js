@@ -78,6 +78,9 @@ const posBookingSchema = new mongoose.Schema({
     default: null,
   },
 
+  // Admin Booking only: the optional note typed by staff when booking. "" when none was entered.
+  remarks: { type: String, default: "", trim: true, maxlength: 500 },
+
   lines: { type: [posBookingLineSchema], default: [] },
 
   subtotal: { type: Number, required: true, min: 0, default: 0 },

@@ -1619,6 +1619,7 @@ async function createOrder(req, res) {
       orderNumber,
       customer: customerId,
       customerDetails: customerDetailsFor(customer, value.customerDetails),
+      remarks: value.remarks || "",
       lines: resolvedLines.map((l) => ({
         refType: l.refType,
         refId: l.refId,
@@ -1769,6 +1770,7 @@ async function writeBookingFromOrder(order, paidAmount) {
       orderId: order._id,
       customer: customerId,
       customerDetails: order.customerDetails ?? customerDetailsFor(order.customer, null),
+      remarks: order.remarks || "",
       lines: order.lines,
       subtotal: order.subtotal,
       gstAmount: order.gstAmount,
@@ -2043,7 +2045,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber")
         .select(
-          "bookingNumber orderId customer customerDetails lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
+          "bookingNumber orderId customer customerDetails remarks lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
         )
         .sort({ bookedAt: -1 })
         .skip(req.listWindow?.skip ?? (page - 1) * pageSize)
@@ -2084,6 +2086,7 @@ async function listBookings(req, res) {
           : null,
         // As typed at the desk when it was booked (name / mobile / email) - see the booking's customerDetails.
         customerDetails: b.customerDetails ?? null,
+        remarks: b.remarks ?? "",
         // The session day(s) the booking was made for (items/services/events with a session rule).
         sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
         // Each booked session day with its AM / PM half (session null when the master has no sessions).

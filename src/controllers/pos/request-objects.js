@@ -85,6 +85,8 @@ const createOrderSchema = Joi.object({
     mobileNumber: Joi.string().trim().max(20).allow("").default(""),
     email: Joi.string().trim().max(200).allow("").default(""),
   }).allow(null),
+  // Admin Booking only: optional staff note stored on the booking ("" when empty).
+  remarks: Joi.string().trim().max(500).allow("", null).default(""),
 });
 
 /**
