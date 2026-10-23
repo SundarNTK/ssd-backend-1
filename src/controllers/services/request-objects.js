@@ -1,6 +1,8 @@
 const Joi = require("joi");
 
 const objectId = Joi.string().hex().length(24);
+// AM / PM, multi-select; unique. Whether it must be non-empty (sessionRequired = Yes) is checked by requireSessionCutoff.
+const sessionsField = Joi.array().items(Joi.string().valid("AM", "PM")).unique();
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 // subCategory is optional — a row can map a service to a Category alone,
@@ -63,6 +65,7 @@ const createSchema = Joi.object({
   image: Joi.string().allow("", null).default(null),
   printImage: Joi.boolean().default(false),
   sessionRequired: Joi.boolean().default(false),
+  availableSessions: sessionsField,
   recurringRequired: Joi.boolean().default(false),
   ticketImage: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
@@ -104,6 +107,7 @@ const updateSchema = Joi.object({
   image: Joi.string().allow("", null),
   printImage: Joi.boolean(),
   sessionRequired: Joi.boolean(),
+  availableSessions: sessionsField,
   recurringRequired: Joi.boolean(),
   ticketImage: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),

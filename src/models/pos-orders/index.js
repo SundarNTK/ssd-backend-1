@@ -54,6 +54,8 @@ const posOrderLineSchema = new mongoose.Schema(
     eventSlot: { type: eventSlotSchema, default: null },
     // Item/Service/Event with a session rule: the day ("YYYY-MM-DD") it was booked for. Null otherwise.
     sessionDate: { type: String, default: null },
+    // The half of that day ("AM" / "PM") the booking was made for, when the master offers sessions. Null otherwise.
+    session: { type: String, enum: ["AM", "PM"], default: null },
     seats: { type: Number, default: 1, min: 1 },
   },
   { _id: false }

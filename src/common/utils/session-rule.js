@@ -41,4 +41,18 @@ function resolveSessionDate(master, line, now = Date.now()) {
   return chosen;
 }
 
-module.exports = { templeToday, dayOf, resolveSessionDate };
+/**
+ * Validates the AM / PM choice of ONE cart line against its master and returns it, or null when the master has no
+ * session rule (or no sessions listed - older records). A single available session is picked automatically.
+ */
+function resolveSession(master, line) {
+  if (!master || master.sessionRequired !== true) return null;
+  const available = Array.isArray(master.availableSessions) ? master.availableSessions : [];
+  if (!available.length) return null;
+  const chosen = line?.session ? String(line.session).toUpperCase() : available.length === 1 ? available[0] : "";
+  if (!chosen) throw `Choose a session (${available.join(" / ")}) for "${master.name}".`;
+  if (!available.includes(chosen)) throw `"${master.name}" is not available in the ${chosen} session.`;
+  return chosen;
+}
+
+module.exports = { templeToday, dayOf, resolveSessionDate, resolveSession };

@@ -80,7 +80,7 @@ const { Booking, BOOKING_STATUSES } = require("../../models/bookings");
 const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
-const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { resolveSessionDate, resolveSession } = require("../../common/utils/session-rule");
 const { notPastCutoff } = require("../../common/utils/booking-cutoff");
 const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
@@ -537,7 +537,7 @@ async function listPosItems(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -599,7 +599,7 @@ async function listPosServices(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -710,7 +710,7 @@ async function listGeneralItems(req, res) {
       GeneralItem.find(filter)
         .populate({ path: "categoryDetails.category", select: "name color", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
         .populate({ path: "categoryDetails.subCategory", select: "name", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
-        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold quantityReduction minQuantity maxQuantity categoryDetails image color favorite sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold quantityReduction minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -754,6 +754,7 @@ async function decorateItems(items) {
     quantityReduction: item.quantityReduction ?? 1,
     categoryDetails: item.categoryDetails,
     sessionRequired: Boolean(item.sessionRequired),
+    availableSessions: item.availableSessions ?? [],
     recurringRequired: Boolean(item.recurringRequired),
     sessionCutoffDate: item.futureBookingCutOffDate || null,
     favorite: Boolean(item.favorite),
@@ -779,6 +780,7 @@ async function decorateServices(services) {
     minQuantity: svc.minQuantity,
     maxQuantity: svc.maxQuantity,
     sessionRequired: Boolean(svc.sessionRequired),
+    availableSessions: svc.availableSessions ?? [],
     recurringRequired: Boolean(svc.recurringRequired),
     sessionCutoffDate: svc.bookingCutoffDate || null,
     favorite: Boolean(svc.favorite),
@@ -1021,7 +1023,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
+                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate"
               )
           )
         : [],
@@ -1033,7 +1035,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired recurringRequired futureBookingCutOffDate bookingCutoffDate"
+                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate"
               )
           )
         : [],
@@ -1136,6 +1138,7 @@ async function bookingSummary(req, res) {
 
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let session = null;
       let quantityLimits = null;
       // Event lines resolve through one shared helper — see common/utils/event-line.js.
       let eventParts = null;
@@ -1155,6 +1158,7 @@ async function bookingSummary(req, res) {
 
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        session = resolveSession(item, line);
         quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
@@ -1170,6 +1174,7 @@ async function bookingSummary(req, res) {
 
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        session = resolveSession(svc, line);
         quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
@@ -1244,6 +1249,7 @@ async function bookingSummary(req, res) {
         quantityExceedsStock: eventParts ? eventParts.seatsExceeded : avail.isInventoryApplicable && qty > avail.availableQty,
         eventSlot: eventParts?.eventSlot ?? null,
         sessionDate,
+        session,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -1271,6 +1277,7 @@ async function bookingSummary(req, res) {
       quantityExceedsStock: l.quantityExceedsStock,
       eventSlot: l.eventSlot,
       sessionDate: l.sessionDate ?? null,
+      session: l.session ?? null,
       seats: l.seats,
     }));
     const subtotal = gst.totalGlAmount;
@@ -1488,6 +1495,7 @@ async function createOrder(req, res) {
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let session = null;
       let quantityLimits = null;
       let eventParts = null;
 
@@ -1505,6 +1513,7 @@ async function createOrder(req, res) {
         }
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        session = resolveSession(item, line);
         quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
@@ -1519,6 +1528,7 @@ async function createOrder(req, res) {
         }
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        session = resolveSession(svc, line);
         quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
@@ -1562,6 +1572,7 @@ async function createOrder(req, res) {
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
         sessionDate,
+        session,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -1585,6 +1596,7 @@ async function createOrder(req, res) {
       devotees: l.devotees,
       eventSlot: l.eventSlot,
       sessionDate: l.sessionDate ?? null,
+      session: l.session ?? null,
       seats: l.seats,
       holdId: l.holdId,
     }));
@@ -1624,6 +1636,7 @@ async function createOrder(req, res) {
         devotees: l.devotees,
         eventSlot: l.eventSlot,
       sessionDate: l.sessionDate ?? null,
+      session: l.session ?? null,
         seats: l.seats,
       })),
       subtotal: +subtotal.toFixed(2),
@@ -2073,6 +2086,8 @@ async function listBookings(req, res) {
         customerDetails: b.customerDetails ?? null,
         // The session day(s) the booking was made for (items/services/events with a session rule).
         sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
+        // Each booked session day with its AM / PM half (session null when the master has no sessions).
+        sessionSlots: [...new Map((b.lines || []).filter((l) => l.sessionDate).map((l) => [`${l.sessionDate}|${l.session || ""}`, { date: l.sessionDate, session: l.session || null }])).values()].sort((a, b) => a.date.localeCompare(b.date) || String(a.session).localeCompare(String(b.session))),
         lineType: deriveLineType(b.lines),
         paymentModeName: b.paymentModeName,
         subtotal: b.subtotal,

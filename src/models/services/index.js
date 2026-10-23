@@ -33,6 +33,8 @@ const serviceSchema = new mongoose.Schema({
   printImage: { type: Boolean, default: false },
   // Session rule: a master with sessionRequired is booked for a day, today up to its Future Booking Cut-off Date (common/utils/session-rule.js).
   sessionRequired: { type: Boolean, default: false },
+  // Which halves of the day can be booked when sessionRequired: any of "AM" / "PM" (required then, empty otherwise).
+  availableSessions: { type: [{ type: String, enum: ["AM", "PM"] }], default: [] },
   recurringRequired: { type: Boolean, default: false },
   // The picture printed on the ticket (its own upload, separate from `image`, the card picture). full Cloudinary secure_url
   ticketImage: { type: String, default: null },

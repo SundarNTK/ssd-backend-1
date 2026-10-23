@@ -162,7 +162,7 @@ async function setMode(req, res) {
       const you = normalizeIp(req.ip);
       const allowedNow = ipAccess.alwaysAllowed().matcher(you) || buildMatcher(rows.map((r) => r.ip))(you);
       if (!allowedNow) {
-        throw `Your current address (${you || "unknown"}) is not on the list, so turning enforcement on would lock you out of the admin site. Add it first (use "Add this address"), or turn on "report" to see what would be blocked.`;
+        throw `Your current address (${you || "unknown"}) is not on the list, so turning enforcement on would lock you out of the admin site. Add your public address to the list first, or choose "Report only" to see what would be blocked.`;
       }
     }
 

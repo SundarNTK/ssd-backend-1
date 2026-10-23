@@ -50,7 +50,7 @@ const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
 const Event = require("../../models/events");
 const { resolveEventLine } = require("../../common/utils/event-line");
-const { resolveSessionDate } = require("../../common/utils/session-rule");
+const { resolveSessionDate, resolveSession } = require("../../common/utils/session-rule");
 const { notPastCutoff } = require("../../common/utils/booking-cutoff");
 const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
@@ -188,6 +188,7 @@ async function createOrder(req, res) {
       let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
       let sessionDate = null;
+      let session = null;
       let quantityLimits = null;
       let eventParts = null;
 
@@ -205,6 +206,7 @@ async function createOrder(req, res) {
         }
         name = item.name;
         sessionDate = resolveSessionDate(item, line);
+        session = resolveSession(item, line);
         quantityLimits = quantityLimitsOf(item);
         code = item.code;
         unitPrice = item.salePrice;
@@ -219,6 +221,7 @@ async function createOrder(req, res) {
         }
         name = svc.name;
         sessionDate = resolveSessionDate(svc, line);
+        session = resolveSession(svc, line);
         quantityLimits = quantityLimitsOf(svc);
         code = svc.code;
         unitPrice = svc.salePrice ?? 0;
@@ -267,6 +270,7 @@ async function createOrder(req, res) {
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
         sessionDate,
+        session,
         seats: eventParts?.seats ?? 1,
         holdId: eventParts?.holdId ?? null,
       });
@@ -290,6 +294,7 @@ async function createOrder(req, res) {
       devotees: l.devotees,
       eventSlot: l.eventSlot,
       sessionDate: l.sessionDate ?? null,
+      session: l.session ?? null,
       seats: l.seats,
       holdId: l.holdId,
     }));
@@ -332,6 +337,7 @@ async function createOrder(req, res) {
           devotees: l.devotees,
           eventSlot: l.eventSlot,
       sessionDate: l.sessionDate ?? null,
+      session: l.session ?? null,
           seats: l.seats,
         })),
         subtotal: +subtotal.toFixed(2),
@@ -757,6 +763,8 @@ async function listBookings(req, res) {
         customerDetails: b.customerDetails ?? null,
         // The session day(s) the booking was made for (items/services/events with a session rule).
         sessionDates: [...new Set((b.lines || []).map((l) => l.sessionDate).filter(Boolean))].sort(),
+        // Each booked session day with its AM / PM half (session null when the master has no sessions).
+        sessionSlots: [...new Map((b.lines || []).filter((l) => l.sessionDate).map((l) => [`${l.sessionDate}|${l.session || ""}`, { date: l.sessionDate, session: l.session || null }])).values()].sort((a, b) => a.date.localeCompare(b.date) || String(a.session).localeCompare(String(b.session))),
         lineType: deriveLineType(b.lines),
         paymentModeName: b.paymentModeName,
         paymentModeNames: paidModeNames.length ? paidModeNames : [b.paymentModeName],

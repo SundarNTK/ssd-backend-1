@@ -21,6 +21,8 @@ const cartLineSchema = Joi.object({
   holdId: Joi.string().hex().length(24).allow("", null).default(null),
   // Item/Service/Event with a session rule: the chosen day, "YYYY-MM-DD" (default today).
   sessionDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).allow("", null).default(null),
+  // AM / PM, for masters that offer sessions.
+  session: Joi.string().valid("AM", "PM").allow("", null).default(null),
   refId: Joi.string().hex().length(24).required(),
   quantity: Joi.number().integer().min(1).required(),
   deities: Joi.array().items(Joi.string().hex().length(24)).default([]),
