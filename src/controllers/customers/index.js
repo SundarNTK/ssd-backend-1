@@ -20,6 +20,7 @@ const createPendingUser = require("../../utilities/helpers/create-pending-user")
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
+const { isPlaceholderEmail } = require("../../common/utils/customer-email");
 const { adminUpdateSchema, adminCreateSchema } = require("./request-objects");
 
 const FAMILY_MEMBER_POPULATE = { path: "familyMembers.natchathiram", select: "name tamilName" };
@@ -126,9 +127,13 @@ async function create(req, res) {
 }
 
 async function update(req, res) {
+  let createdUser = null;
+  // What the profile looked like before this edit, to put it back if giving the devotee a login fails.
+  let before = null;
   try {
     const customer = await Customer.findOne(Customer.notDeletedFilter({ _id: req.params.id }));
     if (!customer) return exceptionHandler({ res, error: "Devotee profile not found.", statusCode: 404 });
+    before = { email: customer.email, isRegistered: customer.isRegistered, linkedUserId: customer.linkedUserId };
 
     const { name, mobileNumber, email, familyMembers, maxFamilyMembers, status } = req.body;
 
@@ -157,7 +162,35 @@ async function update(req, res) {
     if (status !== undefined) customer.status = status;
 
     customer.updatedBy = req.auth?.userId || null;
-    await customer.save();
+
+    // A counter (walk-in) profile has no login. Adding - or changing - a real email on it gives the devotee one: a
+    // login is created, linked, and the activation email is sent so they can set their own password. The edit and
+    // the login stand or fall together.
+    const givingLogin = !customer.linkedUserId && !isPlaceholderEmail(customer.email) && customer.email !== before.email;
+    if (givingLogin) {
+      const entityId = customer.entity;
+      const customerRole = await findActiveRoleByName("Customer");
+      const { user, rawToken } = await createPendingUser({
+        name: customer.name,
+        email: customer.email,
+        mobileNumber: customer.mobileNumber,
+        userType: USER_TYPES.CUSTOMER,
+        entityId,
+        roleIds: customerRole ? [customerRole._id] : [],
+        createdBy: req.auth?.userId,
+      });
+      createdUser = user;
+      customer.linkedUserId = user._id;
+      customer.isRegistered = true;
+      await customer.save();
+      // Staff-added, so the devotee still activates through the customer portal, never /admin.
+      await sendTemplatedEmail("ACCOUNT_ACTIVATION", entityId, user.email, {
+        name: user.name,
+        activationUrl: `${env.CUSTOMER_APP_URL}/customer/activate/${rawToken}`,
+      });
+    } else {
+      await customer.save();
+    }
     await customer.populate(FAMILY_MEMBER_POPULATE);
 
     // The devotee's login follows the profile: Inactive here locks them out of the portal right
@@ -170,12 +203,23 @@ async function update(req, res) {
       );
     }
 
-    return responseHandler({ res, response: customer, successMessage: "Devotee profile updated successfully." });
+    return responseHandler({
+      res,
+      response: customer,
+      successMessage: createdUser
+        ? `Devotee profile updated - an activation email has been sent to ${customer.email}.`
+        : "Devotee profile updated successfully.",
+    });
   } catch (error) {
+    // Put the profile back FIRST: rolling the new login back deletes whichever profile is linked to it.
+    if (createdUser && before) {
+      await Customer.updateOne({ _id: req.params.id }, { $set: before }).catch(() => {});
+    }
+    if (createdUser) await rollbackCreatedUser(createdUser._id);
     if (error?.code === 11000) {
       return exceptionHandler({ res, error: "Those details are already used by another profile.", statusCode: 409 });
     }
-    return exceptionHandler({ res, error });
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
 }
 
@@ -637,3 +681,4 @@ router.post("/import/validate", requirePermission("customers", "fullAccess"), va
 router.post("/import/commit", requirePermission("customers", "fullAccess"), commitImport);
 
 module.exports = router;
+module.exports.update = update;
