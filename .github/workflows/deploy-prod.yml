@@ -44,7 +44,13 @@ jobs:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           IMAGE=$REGISTRY/$ECR_REPOSITORY
-          docker build -t $IMAGE:prod -t $IMAGE:prod-${GITHUB_SHA::7} .
+          # Pulling the base image from Docker Hub can fail briefly (502 / rate limit), so the build is tried up to 3 times.
+          for attempt in 1 2 3; do
+            if docker build -t $IMAGE:prod -t $IMAGE:prod-${GITHUB_SHA::7} .; then break; fi
+            [ "$attempt" = 3 ] && { echo "Image build failed after 3 attempts"; exit 1; }
+            echo "Build attempt $attempt failed - retrying in 30s"
+            sleep 30
+          done
           docker push $IMAGE:prod
           docker push $IMAGE:prod-${GITHUB_SHA::7}
 
