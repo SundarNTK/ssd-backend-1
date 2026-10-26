@@ -11,7 +11,7 @@ const Item = require("../../models/items");
 const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
 const InventoryAdjustment = require("../../models/inventory-adjustments");
-const { createAdjustmentSchema, batchAdjustmentSchema, queuePendingSchema, applyPendingSchema, clearPendingSchema } = require("./request-objects");
+const { physicalCountSchema, createAdjustmentSchema, batchAdjustmentSchema, queuePendingSchema, applyPendingSchema, clearPendingSchema } = require("./request-objects");
 const { queuePending, applyPending, clearPending } = require("./pending");
 const InventoryPending = require("../../models/inventory-pending");
 const AvailableStockHistory = require("../../models/available-stock-history");
@@ -19,6 +19,9 @@ const { applyAdjustmentBatch, InventoryConflict } = require("./adjust");
 const mongoose = require("mongoose");
 const stockReserveApi = require("./stock-reserve-api");
 const StockReserve = require("../../models/stock-reserves");
+const PhysicalStockCount = require("../../models/physical-stock-counts");
+const { applyPhysicalCount } = require("./physical-count");
+const { buildLedger, dayBounds, templeToday, DAY } = require("../../common/utils/stock-ledger");
 
 // Not nested under the /masters group router (see routes/index.js), so
 // authGuard/adminOnly are applied here directly — same as roles/users.
@@ -104,6 +107,12 @@ async function availableStock(req, res) {
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
     const search = req.query.search ? searchRegex(req.query.search) : null;
     const type = req.query.type; // "Item" | "Service" | undefined
+    // The days shown, "YYYY-MM-DD" (Singapore, inclusive); today when not given. Past days are rebuilt from the movement log.
+    const today = templeToday();
+    const dateFrom = req.query.dateFrom ? String(req.query.dateFrom) : today;
+    const dateTo = req.query.dateTo ? String(req.query.dateTo) : dateFrom;
+    dayBounds(dateFrom);
+    dayBounds(dateTo);
 
     // Every queued count in one read, keyed "Type:id" (the rows on a page are looked up against it).
     const pendingByKey = new Map((await InventoryPending.find({ pendingQuantity: { $ne: 0 } }).select("refType refId pendingQuantity")).map((p) => [`${p.refType}:${p.refId}`, p.pendingQuantity]));
@@ -156,11 +165,15 @@ async function availableStock(req, res) {
 
     const total = merged.length;
     const start = (page - 1) * pageSize;
-    const pageItems = merged.slice(start, start + pageSize);
+    const pageRows = merged.slice(start, start + pageSize);
 
-    return responseHandler({ res, response: { items: pageItems, total, page, pageSize } });
+    // The day-by-day figures (opening, in, out, sales, excess/short, in hand, reserved, available) for this page only.
+    const ledger = await buildLedger(pageRows.map((r) => ({ refType: r.refType, _id: r._id, currentStock: r.physicalQuantity })), dateFrom, dateTo);
+    const pageItems = pageRows.map((r) => ({ ...r, ...ledger.get(`${r.refType}:${r._id}`) }));
+
+    return responseHandler({ res, response: { items: pageItems, total, page, pageSize, dateFrom, dateTo, today } });
   } catch (error) {
-    return exceptionHandler({ res, error });
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
 }
 
@@ -221,7 +234,10 @@ async function history(req, res) {
 
     const refType = req.query.refType; // "Item" | "Service" | "GeneralItem" | undefined
     if (["Item", "Service", "GeneralItem"].includes(refType)) filter.refType = refType;
-    if (["Inventory Adjustment", "Available Stock", "Booking", "Stock Reserve"].includes(req.query.source)) filter.source = req.query.source;
+    if (["Inventory Adjustment", "Available Stock", "Booking", "Stock Reserve", "Physical Count"].includes(req.query.source)) filter.source = req.query.source;
+    // Day filter (Singapore days, inclusive): one day, or from - to. Defaults are decided by the screen, not here.
+    const dateRange = createdAtRange(req.query.dateFrom, req.query.dateTo);
+    if (dateRange) filter.createdAt = dateRange;
 
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -262,8 +278,17 @@ async function history(req, res) {
 
     return responseHandler({ res, response: { items, total, page, pageSize } });
   } catch (error) {
-    return exceptionHandler({ res, error });
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
+}
+
+/** createdAt range for dateFrom / dateTo ("YYYY-MM-DD", Singapore days, inclusive); null when neither is given. */
+function createdAtRange(dateFrom, dateTo) {
+  if (!dateFrom && !dateTo) return null;
+  const range = {};
+  if (dateFrom) range.$gte = dayBounds(String(dateFrom)).start;
+  if (dateTo) range.$lt = dayBounds(String(dateTo)).end;
+  return range;
 }
 
 /** Maps a failed adjustment to a status: business rule -> 400, "changed by another user" -> 409, anything else -> 500. */
@@ -405,6 +430,8 @@ async function availableStockHistory(req, res) {
     const filter = {};
     if (["Item", "Service", "GeneralItem"].includes(req.query.refType)) filter.refType = req.query.refType;
     if (["Queued Stock In", "Queued Stock Out", "Added to Adjust", "Cleared Queue"].includes(req.query.action)) filter.action = req.query.action;
+    const dateRange = createdAtRange(req.query.dateFrom, req.query.dateTo);
+    if (dateRange) filter.createdAt = dateRange;
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
       filter.$or = [{ name: regex }, { code: regex }];
@@ -439,7 +466,74 @@ async function availableStockHistory(req, res) {
     }));
     return responseHandler({ res, response: { items, total, page, pageSize } });
   } catch (error) {
-    return exceptionHandler({ res, error });
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
+/**
+ * POST /inventory/physical-count { refType, refId, physicalQuantity, remarks?, requestId }
+ * Records the counted quantity against the system's Stock in Hand; a difference becomes an excess / short movement.
+ */
+async function createPhysicalCount(req, res) {
+  try {
+    const { duplicate, count } = await applyPhysicalCount({ ...req.body, userId: req.auth?.userId || null });
+    const message = duplicate
+      ? "This physical count was already recorded."
+      : count.difference === 0
+        ? "Physical stock matches - no adjustment needed."
+        : `Physical stock recorded: ${count.difference > 0 ? "excess" : "short"} of ${Math.abs(count.difference)} adjusted.`;
+    return responseHandler({ res, response: count, successMessage: message, statusCode: duplicate ? 200 : 201 });
+  } catch (error) {
+    return adjustmentFailure(res, error);
+  }
+}
+
+/**
+ * GET /inventory/physical-counts?search=&refType=&dateFrom=&dateTo=&page=&pageSize=
+ * The Physical Stock History: every count taken, newest first.
+ */
+async function physicalCountHistory(req, res) {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
+    const filter = {};
+    if (["Item", "Service", "GeneralItem"].includes(req.query.refType)) filter.refType = req.query.refType;
+    const from = req.query.dateFrom ? String(req.query.dateFrom) : "";
+    const to = req.query.dateTo ? String(req.query.dateTo) : "";
+    if ((from && !DAY.test(from)) || (to && !DAY.test(to))) throw "Enter a valid date (YYYY-MM-DD).";
+    if (from || to) filter.countDate = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };
+    if (req.query.search) {
+      const regex = searchRegex(req.query.search);
+      filter.$or = [{ name: regex }, { code: regex }];
+    }
+
+    const [rows, total] = await Promise.all([
+      PhysicalStockCount.find(filter)
+        .populate("createdBy", "name email")
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize),
+      PhysicalStockCount.countDocuments(filter),
+    ]);
+
+    const items = rows.map((r) => ({
+      _id: r._id,
+      createdAt: r.createdAt,
+      countDate: r.countDate,
+      refType: r.refType,
+      name: r.name,
+      code: r.code,
+      systemQuantity: r.systemQuantity,
+      physicalQuantity: r.physicalQuantity,
+      difference: r.difference,
+      adjustmentId: r.adjustmentId,
+      remarks: r.remarks,
+      user: r.createdBy?.name ?? "—",
+      userEmail: r.createdBy?.email ?? "",
+    }));
+    return responseHandler({ res, response: { items, total, page, pageSize } });
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
 }
 
@@ -462,6 +556,8 @@ router.post("/stock-reserves/:id/retry", requirePermission("inventory", "fullAcc
 router.post("/stock-reserves/:id/cancel", requirePermission("inventory", "fullAccess"), stockReserveApi.cancel);
 router.get("/stock-holds", requirePermission("inventory", "view"), stockReserveApi.holds);
 router.get("/available-stock-history", requirePermission("inventory", "view"), availableStockHistory);
+router.post("/physical-count", requirePermission("inventory", "fullAccess"), validateBody(physicalCountSchema), createPhysicalCount);
+router.get("/physical-counts", requirePermission("inventory", "view"), physicalCountHistory);
 router.post("/pending", requirePermission("inventory", "fullAccess"), validateBody(queuePendingSchema), queueEntry);
 router.post("/pending/apply", requirePermission("inventory", "fullAccess"), validateBody(applyPendingSchema), applyQueue);
 router.post("/pending/clear", requirePermission("inventory", "fullAccess"), validateBody(clearPendingSchema), clearQueue);

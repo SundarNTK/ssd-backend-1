@@ -45,4 +45,17 @@ const applyPendingSchema = Joi.object({ ...itemRef, requestId: optionalRequestId
 /** POST /inventory/pending/clear */
 const clearPendingSchema = Joi.object({ ...itemRef });
 
-module.exports = { createAdjustmentSchema, batchAdjustmentSchema, queuePendingSchema, applyPendingSchema, clearPendingSchema };
+/** POST /inventory/physical-count - the counted quantity (0 or more, whole units) with an optional remark. */
+const physicalCountSchema = Joi.object({
+  ...itemRef,
+  physicalQuantity: Joi.number().strict().integer().min(0).max(1000000).required().messages({
+    "number.base": "Physical stock must be a number.",
+    "number.integer": "Physical stock must be a whole number.",
+    "number.min": "Physical stock cannot be negative.",
+    "number.max": "Physical stock is too large.",
+  }),
+  remarks: Joi.string().trim().max(300).allow("").default(""),
+  requestId: optionalRequestId.required(),
+});
+
+module.exports = { physicalCountSchema, createAdjustmentSchema, batchAdjustmentSchema, queuePendingSchema, applyPendingSchema, clearPendingSchema };

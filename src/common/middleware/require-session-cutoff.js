@@ -46,7 +46,8 @@ function requireSessionCutoff(Model, field) {
         const cutoffRequired = body.cutoffRequired !== undefined ? body.cutoffRequired : existing?.cutoffRequired;
         if (cutoffRequired === false) {
           body[field] = null;
-        } else if (cutoffRequired === true && !cutoff) {
+        } else if (cutoffRequired === true && (!cutoff || (existing?.cutoffRequired === false && body[field] === undefined))) {
+          // Turning the cut-off on needs a fresh date; whatever date an old record still holds does not count.
           return exceptionHandler({ res, error: CUTOFF_MESSAGE, statusCode: 422 });
         }
       }
