@@ -17,6 +17,8 @@ const findUserByActivationToken = require("../../utilities/helpers/find-user-by-
 const findUserByResetToken = require("../../utilities/helpers/find-user-by-reset-token");
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
+const isUserMobileTaken = require("../../utilities/helpers/is-user-mobile-taken");
+const { Customer } = require("../../models/customers");
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { User } = require("../../models/users");
 const { USER_TYPES, isAdminPanelType } = require("../../utilities/constants/user-types");
@@ -109,11 +111,26 @@ async function login(req, res) {
  */
 async function register(req, res) {
   let createdUser = null;
+  // Set when this registration claims a walk-in profile, so a failure can put the profile back as it was.
+  let claimed = null;
+  let claimedBefore = null;
   try {
     const { name, email, mobileNumber, familyMembers } = req.body;
 
     const entity = await findActiveEntityByCode(env.DEFAULT_ENTITY_CODE);
     if (!entity) throw "Registration isn't available right now — no active entity is configured.";
+
+    // A profile may already exist on this mobile: a walk-in added at the temple counter (maybe with no email). That
+    // one is CLAIMED - the person keeps their customer code, family members and booking history - instead of getting
+    // a second profile. A mobile that already belongs to a registered account is refused.
+    const profile = await Customer.findOne(Customer.notDeletedFilter({ mobileNumber }));
+    if (profile && (profile.isRegistered || profile.linkedUserId)) {
+      throw "An account with this mobile number already exists. Please sign in.";
+    }
+    if (profile) {
+      const emailOnOtherProfile = await Customer.exists(Customer.notDeletedFilter({ email: String(email).trim().toLowerCase(), _id: { $ne: profile._id } }));
+      if (emailOnOtherProfile) throw "An account with this email already exists.";
+    }
 
     const customerRole = await findActiveRoleByName("Customer");
 
@@ -127,14 +144,26 @@ async function register(req, res) {
     });
     createdUser = user;
 
-    await createCustomerProfile({
-      entityId: entity._id,
-      linkedUserId: user._id,
-      name,
-      mobileNumber,
-      email,
-      familyMembers,
-    });
+    if (profile) {
+      claimedBefore = { name: profile.name, email: profile.email, linkedUserId: profile.linkedUserId, isRegistered: profile.isRegistered };
+      claimed = profile;
+      profile.name = name;
+      profile.email = String(email).trim().toLowerCase();
+      profile.linkedUserId = user._id;
+      profile.isRegistered = true;
+      // Family members typed at registration only fill a profile that has none yet (the cap is not exceeded).
+      if (profile.familyMembers.length === 0 && familyMembers?.length) profile.familyMembers = familyMembers;
+      await profile.save();
+    } else {
+      await createCustomerProfile({
+        entityId: entity._id,
+        linkedUserId: user._id,
+        name,
+        mobileNumber,
+        email,
+        familyMembers,
+      });
+    }
 
     // This endpoint only ever creates CUSTOMER accounts (see comment above), so the
     // activation link must send the devotee to the customer portal, never /admin.
@@ -150,7 +179,38 @@ async function register(req, res) {
       statusCode: 201,
     });
   } catch (error) {
+    // Put a claimed counter profile back as it was FIRST: the rollback below deletes the profile linked to the login
+    // it is undoing, and a counter profile must never be lost to a failed registration.
+    if (claimed && claimedBefore) {
+      Object.assign(claimed, claimedBefore);
+      await claimed.save().catch(() => {});
+    }
     if (createdUser) await rollbackCreatedUser(createdUser._id);
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
+/**
+ * Public - GET /auth/register/check?mobileNumber=
+ * Tells the Register form what it is dealing with, so it can adapt before submit:
+ *   new        nothing on this mobile - a normal registration
+ *   walkin     a profile added at the temple counter (maybe with no email): only name and email are asked, the
+ *              mobile is fixed, and registering claims that profile
+ *   registered an account already exists on this mobile - sign in instead
+ * Returns the status only, never the profile's details.
+ */
+async function registerCheck(req, res) {
+  try {
+    const mobileNumber = String(req.query.mobileNumber || "").trim();
+    if (mobileNumber.length < 6) return responseHandler({ res, response: { status: "new" } });
+
+    const [profile, userTaken] = await Promise.all([
+      Customer.findOne(Customer.notDeletedFilter({ mobileNumber })).select("isRegistered linkedUserId"),
+      isUserMobileTaken(mobileNumber),
+    ]);
+    const registered = userTaken || (profile && (profile.isRegistered || profile.linkedUserId));
+    return responseHandler({ res, response: { status: registered ? "registered" : profile ? "walkin" : "new" } });
+  } catch (error) {
     return exceptionHandler({ res, error });
   }
 }
@@ -323,6 +383,7 @@ const router = express.Router();
 
 router.post("/login", validateBody(loginSchema), login);
 router.post("/register", validateBody(registerSchema), register);
+router.get("/register/check", registerCheck);
 
 // Read-only — let Set-Password/Reset-Password greet the person by name and
 // check password strength against their real name/email/mobile *before*

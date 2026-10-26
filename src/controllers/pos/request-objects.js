@@ -135,9 +135,8 @@ const customerSearchSchema = Joi.object({
 
 /**
  * POST /pos/booking/customers
- * Creates a walk-in devotee profile at the counter — mirrors Customer's own
- * required-field shape (name + email required, mobile optional), so a
- * walk-in profile isn't a lesser record than one created any other way.
+ * Creates a walk-in devotee profile at the counter: a name plus an email and / or a mobile number (at least one of
+ * the two, so the person can be found - and later registered - by it).
  */
 /**
  * Admin Booking's first step: just a name and a Singapore mobile number (8 digits, starting with 8 or 9).
@@ -151,10 +150,14 @@ const quickCustomerSchema = Joi.object({
   email: Joi.string().trim().email({ tlds: false }).allow("", null).default(null),
 });
 
+// Email is optional: a walk-in without one must give a mobile number, which is what they are found and registered by.
 const createCustomerSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150).required(),
-  email: Joi.string().trim().email({ tlds: false }).required(),
+  email: Joi.string().trim().email({ tlds: false }).allow("", null).default(null),
   mobileNumber: Joi.string().trim().allow("", null).default(null),
+}).custom((value, helpers) => {
+  if (!value.email && !value.mobileNumber) return helpers.message("Enter a mobile number when there is no email.");
+  return value;
 });
 
 

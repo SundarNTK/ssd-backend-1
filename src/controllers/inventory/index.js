@@ -553,7 +553,6 @@ router.post("/stock-reserves/process-due", requirePermission("inventory", "fullA
 router.get("/stock-reserves", requirePermission("inventory", "view"), stockReserveApi.list);
 router.get("/stock-reserves/:id", requirePermission("inventory", "view"), stockReserveApi.detail);
 router.post("/stock-reserves/:id/retry", requirePermission("inventory", "fullAccess"), stockReserveApi.retry);
-router.post("/stock-reserves/:id/cancel", requirePermission("inventory", "fullAccess"), stockReserveApi.cancel);
 router.get("/stock-holds", requirePermission("inventory", "view"), stockReserveApi.holds);
 router.get("/available-stock-history", requirePermission("inventory", "view"), availableStockHistory);
 router.post("/physical-count", requirePermission("inventory", "fullAccess"), validateBody(physicalCountSchema), createPhysicalCount);

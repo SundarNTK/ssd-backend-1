@@ -81,6 +81,7 @@ const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate, resolveSession } = require("../../common/utils/session-rule");
+const { placeholderEmail, isPlaceholderEmail } = require("../../common/utils/customer-email");
 const { notPastCutoff, cutoffOf, cutoffPassed } = require("../../common/utils/booking-cutoff");
 const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
@@ -259,10 +260,13 @@ async function createWalkInCustomer(req, res) {
     const { error, value } = createCustomerSchema.validate(req.body);
     if (error) throw error.details[0].message;
 
-    const { name, email, mobileNumber } = value;
+    const { name, mobileNumber } = value;
+    const email = value.email ? String(value.email).trim().toLowerCase() : null;
 
-    const emailTaken = await Customer.exists(Customer.notDeletedFilter({ email }));
-    if (emailTaken) throw "A devotee profile already uses this email.";
+    if (email) {
+      const emailTaken = await Customer.exists(Customer.notDeletedFilter({ email }));
+      if (emailTaken) throw "A devotee profile already uses this email.";
+    }
     if (mobileNumber) {
       const mobileTaken = await Customer.exists(Customer.notDeletedFilter({ mobileNumber }));
       if (mobileTaken) throw "A devotee profile already uses this mobile number.";
@@ -274,7 +278,8 @@ async function createWalkInCustomer(req, res) {
     const customer = await createCustomerProfile({
       entityId,
       name,
-      email,
+      // No email given: the profile keeps a placeholder (see common/utils/customer-email) until they register.
+      email: email || placeholderEmail(mobileNumber),
       mobileNumber: mobileNumber || null,
       // A walk-in starts unregistered — see models/customers' own comment.
       // A repeat visit on the same mobile is matched and reused (GET
@@ -324,7 +329,7 @@ async function quickCustomer(req, res) {
     const customer = await createCustomerProfile({
       entityId,
       name,
-      email: email || `walkin.${mobileNumber}@no-email.local`,
+      email: email || placeholderEmail(mobileNumber),
       mobileNumber,
       isRegistered: false,
     });
@@ -412,6 +417,8 @@ async function lookupCustomerByMobile(req, res) {
       Customer.notDeletedFilter({ mobileNumber, status: 1, isRegistered: false })
     ).select("customerCode name email mobileNumber");
 
+    // A placeholder email is not a real address: the form shows it as empty.
+    if (customer && isPlaceholderEmail(customer.email)) customer.email = "";
     return responseHandler({ res, response: customer });
   } catch (error) {
     return exceptionHandler({ res, error });
@@ -2614,3 +2621,6 @@ module.exports.recordBookingPayment = recordBookingPayment;
 module.exports.getRecentBookings = getRecentBookings;
 module.exports.computeAdminBookingTicketGroups = computeAdminBookingTicketGroups;
 module.exports.getAdminBookingTicketGroups = getAdminBookingTicketGroups;
+module.exports.createWalkInCustomer = createWalkInCustomer;
+module.exports.quickCustomer = quickCustomer;
+module.exports.lookupCustomerByMobile = lookupCustomerByMobile;
