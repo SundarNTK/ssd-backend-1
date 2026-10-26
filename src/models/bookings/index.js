@@ -109,6 +109,7 @@ const bookingSchema = new mongoose.Schema({
   // (Admin Panel, POS counter, or future Customer Portal) created this booking.
   portal: { type: String, enum: PORTAL_TYPES, default: "admin" },
   ...require("../../common/utils/booking-reprint").reprintFields,
+  ...require("../../common/booking-email/email-log").emailLogFields,
 
   bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   entity: { type: mongoose.Schema.Types.ObjectId, default: null },

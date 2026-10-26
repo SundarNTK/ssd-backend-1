@@ -38,7 +38,7 @@ function buttonLink(href, label) {
   const text = String(label || "Open").replace(/<[^>]+>/g, "").trim() || "Open";
   return (
     `<div align="center" style="margin:28px 0;text-align:center;">` +
-    `<a href="${url}" target="_blank" style="background-color:#7c1527;color:#ffffff;display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;text-align:center;text-decoration:none;padding:14px 36px;border-radius:8px;">${text}</a>` +
+    `<a href="${url}" target="_blank" style="background-color:#7c1527;color:#ffffff;display:inline-block;font-family:Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;line-height:20px;text-align:center;text-decoration:none;padding:15px 40px;border-radius:10px;border-bottom:3px solid #c1851a;">${text}</a>` +
     `</div>`
   );
 }
@@ -79,13 +79,16 @@ function htmlToText(html) {
  * `body` is inserted raw (`{{{body}}}`) because it is already HTML.
  * The logo comes from the entity; this function does not look one up.
  */
-function renderEmailHtml({ body, entityLogo = "", templeName = "Sri Siva Durga Temple" }) {
+function renderEmailHtml({ body, entityLogo = "", templeName = "Sri Siva Durga Temple", footerAddress = "", footerContact = "" }) {
   const raw = String(body || "");
   if (isAlreadyWrapped(raw)) return solidifyButtons(raw);
   return compiledShell({
     body: solidifyButtons(peelToInner(raw)),
     entityLogo: entityLogo || "",
     templeName: templeName || "Sri Siva Durga Temple",
+    footerAddress,
+    footerContact,
+    year: new Date().getFullYear(),
   });
 }
 

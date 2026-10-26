@@ -17,6 +17,7 @@ const ensureCustomerProfileForUser = require("../../utilities/helpers/ensure-cus
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
+const resendActivation = require("../../utilities/helpers/resend-activation");
 const isUserEmailTaken = require("../../utilities/helpers/is-user-email-taken");
 const isUserMobileTaken = require("../../utilities/helpers/is-user-mobile-taken");
 const { createSchema, updateSchema } = require("./request-objects");
@@ -238,6 +239,30 @@ async function update(req, res) {
   }
 }
 
+/**
+ * POST /users/:id/resend-activation
+ * For an admin user who never set a password (lost or missed the first email): a fresh set-password link goes to
+ * their email, replacing the old one. Same rules as editing the account - a System Admin account only by another
+ * System Admin - and a devotee account is not handled here (use Customers).
+ */
+async function resendUserActivation(req, res) {
+  try {
+    const user = await User.findOne(User.notDeletedFilter({ _id: req.params.id }));
+    if (!user) return exceptionHandler({ res, error: "User not found.", statusCode: 404 });
+    if (user.userType === USER_TYPES.CUSTOMER) throw "Devotee accounts are managed from Customers.";
+    if (user.userType === USER_TYPES.SUPER_ADMIN) assertMaySuperAdmin(req, "modify");
+
+    const { email, dryRun } = await resendActivation(user);
+    return responseHandler({
+      res,
+      response: { email, dryRun },
+      successMessage: dryRun ? `Activation email prepared for ${email} (test mode - not actually sent).` : `Activation email sent to ${email}.`,
+    });
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
 // Mounted at /users — see routes/index.js for why the prefix lives there.
 const router = express.Router();
 router.use(authGuard, adminOnly);
@@ -253,5 +278,8 @@ router.get("/assignable-roles", requirePermission("users", "edit"), assignableRo
 router.get("/", requirePermission("users", "view"), list);
 router.post("/", requirePermission("users", "fullAccess"), uploadAvatar, validateBody(createSchema), create);
 router.put("/:id", requirePermission("users", "edit"), uploadAvatar, validateBody(updateSchema), update);
+router.post("/:id/resend-activation", requirePermission("users", "edit"), resendUserActivation);
 
 module.exports = router;
+
+module.exports.resendUserActivation = resendUserActivation;

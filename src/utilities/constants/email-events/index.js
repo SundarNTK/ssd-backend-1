@@ -25,6 +25,30 @@ const EMAIL_EVENTS = [
       { token: "expiresInMinutes", label: "Link expiry, in minutes" },
     ],
   },
+  {
+    key: "BOOKING_CONFIRMATION",
+    label: "Booking Confirmation",
+    description: "Sent from the Transactions screens (Send Email) with the full booking receipt attached as a PDF. It is never sent automatically.",
+    placeholders: [
+      { token: "name", label: "Customer name" },
+      { token: "bookingNumber", label: "Booking number" },
+      { token: "orderNumber", label: "Order number" },
+      { token: "receiptNumbers", label: "Receipt number(s)" },
+      { token: "bookedOn", label: "Booking date and time" },
+      { token: "paymentStatusLabel", label: "Paid / Partially paid / Pending" },
+      { token: "subtotal", label: "Subtotal" },
+      { token: "gstAmount", label: "GST" },
+      { token: "grandTotal", label: "Total" },
+      { token: "amountPaid", label: "Amount paid" },
+      { token: "balanceAmount", label: "Balance due" },
+      { token: "hasItems / items", label: "Items booked (name, quantity, amount, session)" },
+      { token: "hasServices / services", label: "Services booked" },
+      { token: "hasGeneralItems / generalItems", label: "General items booked" },
+      { token: "hasEvents / events", label: "Events booked (slot, seats, amount)" },
+      { token: "hasPayments / payments", label: "Payments received (receipt, mode, amount, date)" },
+      { token: "templeName", label: "Temple name" },
+    ],
+  },
 ];
 
 const EMAIL_EVENT_KEYS = EMAIL_EVENTS.map((event) => event.key);

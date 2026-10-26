@@ -4,6 +4,7 @@ const app = require("./app");
 const { startReservationCleanupJob } = require("./utilities/helpers/release-expired-reservations");
 const { startStockReserveJob } = require("./utilities/helpers/process-stock-reserves");
 const { reconcileReservedStock } = require("./controllers/pos/inventory-reservation");
+const { ensureDefaultEmailTemplatesForAllEntities } = require("./seed/seedEmailTemplates");
 const { assertPaynowReadyAtStartup } = require("./controllers/payments/paynow/config-validation");
 
 async function start() {
@@ -13,6 +14,10 @@ async function start() {
   console.log(`>>> ${await assertPaynowReadyAtStartup()}`);
 
   await connectDatabase();
+
+  // Default email templates (account activation, password reset, booking confirmation): created on the first start
+  // after a deploy if missing, skipped if they already exist. Safe to run on every start.
+  await ensureDefaultEmailTemplatesForAllEntities();
 
   // Start the inventory-reservation expiry cleanup job.
   // Runs every minute — releases held stock for orders that were

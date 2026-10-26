@@ -105,6 +105,7 @@ const posBookingSchema = new mongoose.Schema({
   // order / payment flow, so same collections). Records from before this field are POS.
   portal: { type: String, enum: ["pos", "admin"], default: "pos" },
   ...require("../../common/utils/booking-reprint").reprintFields,
+  ...require("../../common/booking-email/email-log").emailLogFields,
   bookedAt: { type: Date, required: true },
 
   // Denormalized snapshots — see common/utils/entity-snapshot.

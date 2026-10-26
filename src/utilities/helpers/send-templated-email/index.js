@@ -20,7 +20,7 @@ function publicLogo(url) {
  * card, header, and logo are the shared shell — the logo is the entity's
  * uploaded image, with EMAIL_LOGO_URL only when that image is still empty.
  */
-async function sendTemplatedEmail(event, entityId, to, data = {}) {
+async function sendTemplatedEmail(event, entityId, to, data = {}, { attachments = [] } = {}) {
   const mapping = await EmailTemplateMapping.findOne(
     EmailTemplateMapping.notDeletedFilter({
       entity: entityId,
@@ -53,11 +53,15 @@ async function sendTemplatedEmail(event, entityId, to, data = {}) {
   }
 
   const entity = entityId
-    ? await Entity.findById(entityId).select("logoUrl templeName name")
+    ? await Entity.findById(entityId).select("logoUrl templeName name address mobileNumber email")
     : null;
   const logo = publicLogo(entity?.logoUrl) || publicLogo(env.EMAIL_LOGO_URL);
   const templeName = entity?.templeName || entity?.name || "Sri Siva Durga Temple";
-  const html = renderEmailHtml({ body: inner, entityLogo: logo, templeName });
+  // The footer: where the temple is and how to reach it, from the Entity master.
+  const a = entity?.address || {};
+  const footerAddress = [[a.block, a.street].filter(Boolean).join(" "), a.unit, [a.country, a.pincode].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const footerContact = [entity?.mobileNumber, entity?.email].filter(Boolean).join("  |  ");
+  const html = renderEmailHtml({ body: inner, entityLogo: logo, templeName, footerAddress, footerContact });
   const from = mapping.fromOverride || undefined;
   const fromDomain = String(from || env.SENDER_EMAIL_ID || "").split("@")[1] || "";
   const fromName = /^(gmail|googlemail)\.com$/i.test(fromDomain) ? undefined : templeName;
@@ -71,6 +75,7 @@ async function sendTemplatedEmail(event, entityId, to, data = {}) {
     bcc: mapping.bcc,
     from,
     fromName,
+    attachments,
   });
 }
 

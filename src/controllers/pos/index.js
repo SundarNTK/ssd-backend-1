@@ -2551,6 +2551,8 @@ function registerAdminLedgerRoutes(r) {
   r.get("/bookings/:id", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingDetail, getBookingDetail));
   r.get("/bookings/:id/ticket-groups", requireLedgerAccess("view"), byBookingStore(posOrders.getBookingTicketGroups, getAdminBookingTicketGroups));
   r.post("/bookings/:id/reprint", requireLedgerAccess("edit"), byBookingStore(posOrders.reprintPosBooking, reprintLegacyBooking));
+  // Booking Confirmation email with the receipt PDF - reads either booking store itself.
+  r.post("/bookings/:id/send-email", requireLedgerAccess("edit"), require("../booking-email").sendBookingEmail);
   r.post(
     "/bookings/:id/payments",
     requireLedgerAccess("fullAccess"),

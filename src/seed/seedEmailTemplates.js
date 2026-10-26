@@ -1,35 +1,16 @@
 const EmailTemplate = require("../models/email-templates");
 const EmailTemplateMapping = require("../models/email-template-mappings");
+const bookingConfirmationTemplate = require("./templates/booking-confirmation");
 
-const button = (href, label) =>
-  `<div align="center" style="margin:28px 0;text-align:center;"><a href="${href}" target="_blank" style="background-color:#7c1527;color:#ffffff;display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;text-align:center;text-decoration:none;padding:14px 36px;border-radius:8px;">${label}</a></div>`;
+const accountActivationTemplate = require("./templates/account-activation");
+const passwordResetTemplate = require("./templates/password-reset");
 
 /**
  * Inner message only. The logo and the card around it are added when the
  * mail is sent (see common/mailer/render-email.js), using the entity logo.
+ * Each default carries a version marker, so a deploy can replace an older copy nobody has edited.
  */
-const DEFAULT_TEMPLATES = [
-  {
-    name: "Account Activation",
-    event: "ACCOUNT_ACTIVATION",
-    subject: "Set your password — Sri Siva Durga Temple",
-    htmlContent: `<p>Dear {{name}},</p>
-<p>We are pleased to welcome you to the Sri Siva Durga Temple community.</p>
-<p>Your account has been created successfully. Please set your password to get started and access your temple account.</p>
-${button("{{activationUrl}}", "Set Your Password")}
-<p>May the divine blessings of Lord Siva and Goddess Durga be with you and your family always.</p>
-<p style="color:#7d6c4d;font-size:13px;">If you did not request this account, you may safely ignore this email.</p>`,
-  },
-  {
-    name: "Password Reset",
-    event: "PASSWORD_RESET",
-    subject: "Reset your password — Sri Siva Durga Temple",
-    htmlContent: `<p>Dear {{name}},</p>
-<p>We received a request to reset your password. Use the button below to choose a new one.</p>
-${button("{{resetUrl}}", "Reset Password")}
-<p style="color:#7d6c4d;font-size:13px;">This link expires in {{expiresInMinutes}} minutes. If you didn't request this, your password is still safe — just ignore this email.</p>`,
-  },
-];
+const DEFAULT_TEMPLATES = [accountActivationTemplate, passwordResetTemplate, bookingConfirmationTemplate];
 
 function wasNeverEdited(doc) {
   if (!doc.updatedAt || !doc.createdAt) return true;
@@ -64,6 +45,25 @@ async function ensureDefaultEmailTemplates(entityId) {
       console.log(`>>> Seed: email template "${def.name}" stored as inner content (logo comes from the entity)`);
     }
 
+    // A newer version of a default (it carries a version marker): replace an older copy that nobody has edited, in
+    // the template and in this entity's mapping. An edited copy is never touched.
+    if (def.marker && !String(template.htmlContent || "").includes(def.marker)) {
+      const previousContent = template.htmlContent;
+      if (wasNeverEdited(template)) {
+        template.subject = def.subject;
+        template.htmlContent = def.htmlContent;
+        await template.save();
+        console.log(`>>> Seed: email template "${def.name}" upgraded to the latest default`);
+      }
+      const outdated = await EmailTemplateMapping.findOne(EmailTemplateMapping.notDeletedFilter({ entity: entityId, event: def.event }));
+      if (outdated && template.htmlContent === def.htmlContent && String(outdated.content || "").trim() === String(previousContent || "").trim()) {
+        outdated.subject = template.subject;
+        outdated.content = template.htmlContent;
+        await outdated.save();
+        console.log(`>>> Seed: "${def.event}" mapping upgraded to the latest default`);
+      }
+    }
+
     const existingMapping = await EmailTemplateMapping.findOne(
       EmailTemplateMapping.notDeletedFilter({ entity: entityId, event: def.event })
     );
@@ -88,4 +88,22 @@ async function ensureDefaultEmailTemplates(entityId) {
   }
 }
 
-module.exports = { ensureDefaultEmailTemplates, DEFAULT_TEMPLATES };
+/**
+ * Run on every server start (UAT and production deploys included): for each active entity, make sure every default
+ * template and its event mapping exists. Anything already there is left exactly as it is - including a template an
+ * admin has edited - so this only ever inserts what is missing. Never throws: a failure is logged and the server
+ * still starts.
+ */
+async function ensureDefaultEmailTemplatesForAllEntities() {
+  try {
+    const Entity = require("../models/entities");
+    const entities = await Entity.find(Entity.notDeletedFilter({ status: 1 })).select("_id");
+    for (const entity of entities) await ensureDefaultEmailTemplates(entity._id);
+    return { entities: entities.length };
+  } catch (err) {
+    console.error(">>> Seed: could not ensure the default email templates:", err.message);
+    return { entities: 0, error: err.message };
+  }
+}
+
+module.exports = { ensureDefaultEmailTemplates, ensureDefaultEmailTemplatesForAllEntities, DEFAULT_TEMPLATES };

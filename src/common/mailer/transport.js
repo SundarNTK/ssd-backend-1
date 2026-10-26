@@ -139,9 +139,36 @@ function chooseProvider(from) {
   return "ses";
 }
 
-async function sendViaSes({ to, cc, bcc, subject, html, text, from, fromName }) {
+/**
+ * An email with attachments cannot use SES's "Simple" content, so the whole message is built as raw MIME
+ * (nodemailer's composer does this) and sent as Raw content.
+ */
+async function buildRawMime({ to, cc, bcc, subject, html, text, from, fromName, attachments }) {
+  const MailComposer = require("nodemailer/lib/mail-composer");
+  return new Promise((resolve, reject) => {
+    new MailComposer({
+      from: formatFrom(from, fromName),
+      to,
+      cc: cc?.length ? cc : undefined,
+      bcc: bcc?.length ? bcc : undefined,
+      subject,
+      html,
+      text: text || undefined,
+      attachments: attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
+    })
+      .compile()
+      .build((err, message) => (err ? reject(err) : resolve(message)));
+  });
+}
+
+async function sendViaSes({ to, cc, bcc, subject, html, text, from, fromName, attachments = [] }) {
   const { SendEmailCommand } = require("@aws-sdk/client-sesv2");
   try {
+    if (attachments.length > 0) {
+      const raw = await buildRawMime({ to, cc, bcc, subject, html, text, from, fromName, attachments });
+      await getSes().send(new SendEmailCommand({ FromEmailAddress: addressOf(from), Destination: { ToAddresses: [to], ...(cc?.length ? { CcAddresses: cc } : {}), ...(bcc?.length ? { BccAddresses: bcc } : {}) }, Content: { Raw: { Data: raw } } }));
+      return;
+    }
     await getSes().send(
       new SendEmailCommand({
         FromEmailAddress: formatFrom(from, fromName),
@@ -173,7 +200,7 @@ function getEmailProvider() {
   return "ses";
 }
 
-async function sendViaBrevo({ to, cc, bcc, subject, html, text, from, fromName }) {
+async function sendViaBrevo({ to, cc, bcc, subject, html, text, from, fromName, attachments = [] }) {
   const fromEmail = addressOf(from);
 
   const res = await fetch(`${BREVO_API}/smtp/email`, {
@@ -191,6 +218,7 @@ async function sendViaBrevo({ to, cc, bcc, subject, html, text, from, fromName }
       subject,
       htmlContent: html,
       ...(text ? { textContent: text } : {}),
+      ...(attachments.length ? { attachment: attachments.map((a) => ({ name: a.filename, content: Buffer.from(a.content).toString("base64") })) } : {}),
     }),
   });
 
@@ -206,7 +234,7 @@ async function sendViaBrevo({ to, cc, bcc, subject, html, text, from, fromName }
   }
 }
 
-async function sendViaGmail({ to, cc, bcc, subject, html, text, from, fromName }) {
+async function sendViaGmail({ to, cc, bcc, subject, html, text, from, fromName, attachments = [] }) {
   const transport = getTransporter();
   await transport.sendMail({
     from: formatFrom(from, fromName),
@@ -216,6 +244,7 @@ async function sendViaGmail({ to, cc, bcc, subject, html, text, from, fromName }
     bcc: bcc?.length ? bcc : undefined,
     subject,
     html,
+    attachments: attachments.length ? attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })) : undefined,
   });
 }
 
@@ -258,17 +287,18 @@ function writeDryRunLog(entry) {
  * activation/forgot-password flow can be tested safely with no email
  * provider configured at all.
  */
-async function sendRawEmail({ to, subject, html, text, cc = [], bcc = [], from, fromName }) {
+async function sendRawEmail({ to, subject, html, text, cc = [], bcc = [], from, fromName, attachments = [] }) {
   const fromAddress = addressOf(from);
   if (env.DRY_RUN_NOTIFICATIONS) {
     console.log(`\n>>> [DRY RUN] Email NOT sent — would have gone to: ${to}`);
     console.log(`>>> [DRY RUN] Subject: ${subject}`);
-    writeDryRunLog({ timestamp: new Date().toISOString(), to, cc, bcc, from: fromAddress, subject, html });
+    if (attachments.length) console.log(`>>> [DRY RUN] Attachments: ${attachments.map((a) => `${a.filename} (${a.content.length} bytes)`).join(", ")}`);
+    writeDryRunLog({ timestamp: new Date().toISOString(), to, cc, bcc, from: fromAddress, subject, html, attachments: attachments.map((a) => ({ filename: a.filename, bytes: a.content.length })) });
     return { dryRun: true };
   }
 
   const provider = chooseProvider(fromAddress);
-  const message = { to, cc, bcc, subject, html, text, from: fromAddress, fromName };
+  const message = { to, cc, bcc, subject, html, text, from: fromAddress, fromName, attachments };
 
   await waitForSendSlot();
 
@@ -332,4 +362,4 @@ async function verifyEmailConnection() {
   }
 }
 
-module.exports = { sendRawEmail, EmailDeliveryError, describeSesError, isSesConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };
+module.exports = { buildRawMime, sendRawEmail, EmailDeliveryError, describeSesError, isSesConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };

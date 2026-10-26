@@ -60,6 +60,7 @@ const { PosOrder } = require("../../models/pos-orders");
 const { PosBooking, POS_BOOKING_STATUSES } = require("../../models/pos-bookings");
 const { makeReprintHandler, ticketReprintCounts } = require("../../common/utils/booking-reprint");
 const reprintPosBooking = makeReprintHandler(PosBooking);
+const { sendBookingEmail } = require("../booking-email");
 const { PosTransaction } = require("../../models/pos-transactions");
 const PrintSplitSetting = require("../../models/print-split-settings");
 const findActiveEntityById = require("../../utilities/helpers/find-active-entity-by-id");
@@ -1598,6 +1599,7 @@ function registerPosOrderWriteRoutes(r) {
 /** The POS counter's own transactions ledger routes. */
 function registerPosLedgerRoutes(r) {
   r.post("/bookings/:id/reprint", requirePermission("pos-transactions", "edit"), reprintPosBooking);
+  r.post("/bookings/:id/send-email", requirePermission("pos-transactions", "edit"), sendBookingEmail);
   r.get("/bookings", requirePermission("pos-transactions", "view"), listBookings);
   r.get("/bookings/:id", requirePermission("pos-transactions", "view"), getBookingDetail);
   r.get("/bookings/:id/ticket-groups", requirePermission("pos-transactions", "view"), getBookingTicketGroups);

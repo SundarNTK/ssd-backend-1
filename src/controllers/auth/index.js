@@ -17,7 +17,6 @@ const findUserByActivationToken = require("../../utilities/helpers/find-user-by-
 const findUserByResetToken = require("../../utilities/helpers/find-user-by-reset-token");
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
-const isUserMobileTaken = require("../../utilities/helpers/is-user-mobile-taken");
 const { Customer } = require("../../models/customers");
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { User } = require("../../models/users");
@@ -123,6 +122,19 @@ async function register(req, res) {
     // A profile may already exist on this mobile: a walk-in added at the temple counter (maybe with no email). That
     // one is CLAIMED - the person keeps their customer code, family members and booking history - instead of getting
     // a second profile. A mobile that already belongs to a registered account is refused.
+    // An account that already uses this email or mobile. One that is fully set up just needs to sign in; one that
+    // never got its password set (the activation email was missed) is pointed to Forgot password, which sends the
+    // set-password link again.
+    const lowerEmail = String(email).trim().toLowerCase();
+    const emailOwner = await User.findOne(User.notDeletedFilter({ email: lowerEmail })).select("passwordSetAt");
+    const mobileOwner = emailOwner ? null : await User.findOne(User.notDeletedFilter({ mobileNumber })).select("passwordSetAt");
+    const existingAccount = emailOwner || mobileOwner;
+    if (existingAccount) {
+      const what = emailOwner ? "email" : "mobile number";
+      if (existingAccount.passwordSetAt) throw `An account with this ${what} already exists. Please sign in.`;
+      throw `This ${what} is already registered, but its password has not been set yet. If you didn't receive the activation email, use "Forgot password" to set your password.`;
+    }
+
     const profile = await Customer.findOne(Customer.notDeletedFilter({ mobileNumber }));
     if (profile && (profile.isRegistered || profile.linkedUserId)) {
       throw "An account with this mobile number already exists. Please sign in.";
@@ -197,6 +209,7 @@ async function register(req, res) {
  *   walkin     a profile added at the temple counter (maybe with no email): only name and email are asked, the
  *              mobile is fixed, and registering claims that profile
  *   registered an account already exists on this mobile - sign in instead
+ *   pending    an account exists but its password was never set - use Forgot password to get the link again
  * Returns the status only, never the profile's details.
  */
 async function registerCheck(req, res) {
@@ -204,11 +217,13 @@ async function registerCheck(req, res) {
     const mobileNumber = String(req.query.mobileNumber || "").trim();
     if (mobileNumber.length < 6) return responseHandler({ res, response: { status: "new" } });
 
-    const [profile, userTaken] = await Promise.all([
+    const [profile, owner] = await Promise.all([
       Customer.findOne(Customer.notDeletedFilter({ mobileNumber })).select("isRegistered linkedUserId"),
-      isUserMobileTaken(mobileNumber),
+      User.findOne(User.notDeletedFilter({ mobileNumber })).select("passwordSetAt"),
     ]);
-    const registered = userTaken || (profile && (profile.isRegistered || profile.linkedUserId));
+    // pending = the account exists but its password was never set (the activation email was missed).
+    if (owner && !owner.passwordSetAt) return responseHandler({ res, response: { status: "pending" } });
+    const registered = owner || (profile && (profile.isRegistered || profile.linkedUserId));
     return responseHandler({ res, response: { status: registered ? "registered" : profile ? "walkin" : "new" } });
   } catch (error) {
     return exceptionHandler({ res, error });
@@ -344,6 +359,13 @@ async function resetPassword(req, res) {
     user.passwordHash = await hashPassword(newPassword);
     user.passwordResetTokenHash = null;
     user.passwordResetTokenExpiresAt = null;
+    // Someone who never used their activation email can set their first password through a reset link. That counts
+    // as activating the account (the admin lists show "Set"), and the unused activation link is cancelled.
+    if (!user.passwordSetAt) {
+      user.passwordSetAt = new Date();
+      user.activationTokenHash = null;
+      user.activationTokenExpiresAt = null;
+    }
     await user.save();
 
     return responseHandler({ res, successMessage: "Password reset successfully. You can now sign in." });

@@ -21,6 +21,7 @@ const createCustomerProfile = require("../../utilities/helpers/create-customer-p
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
 const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { isPlaceholderEmail } = require("../../common/utils/customer-email");
+const resendActivation = require("../../utilities/helpers/resend-activation");
 const { adminUpdateSchema, adminCreateSchema } = require("./request-objects");
 
 const FAMILY_MEMBER_POPULATE = { path: "familyMembers.natchathiram", select: "name tamilName" };
@@ -219,6 +220,29 @@ async function update(req, res) {
     if (error?.code === 11000) {
       return exceptionHandler({ res, error: "Those details are already used by another profile.", statusCode: 409 });
     }
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
+/**
+ * POST /customers/:id/resend-activation
+ * For a devotee who never set a password: a fresh set-password link goes to their email, replacing the old one.
+ * A counter customer with no login yet has nothing to resend - add an email on the Edit screen to create it.
+ */
+async function resendCustomerActivation(req, res) {
+  try {
+    const customer = await Customer.findOne(Customer.notDeletedFilter({ _id: req.params.id }));
+    if (!customer) return exceptionHandler({ res, error: "Devotee profile not found.", statusCode: 404 });
+    const user = customer.linkedUserId ? await User.findOne(User.notDeletedFilter({ _id: customer.linkedUserId })) : null;
+    if (!user) throw "This devotee has no login yet. Add an email address on the Edit screen to create one and send the activation email.";
+
+    const { email, dryRun } = await resendActivation(user);
+    return responseHandler({
+      res,
+      response: { email, dryRun },
+      successMessage: dryRun ? `Activation email prepared for ${email} (test mode - not actually sent).` : `Activation email sent to ${email}.`,
+    });
+  } catch (error) {
     return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
   }
 }
@@ -675,6 +699,7 @@ router.use(authGuard, adminOnly);
 router.get("/", requirePermission("customers", "view"), list);
 router.post("/", requirePermission("customers", "fullAccess"), validateBody(adminCreateSchema), create);
 router.put("/:id", requirePermission("customers", "edit"), validateBody(adminUpdateSchema), update);
+router.post("/:id/resend-activation", requirePermission("customers", "edit"), resendCustomerActivation);
 
 router.get("/import/template", requirePermission("customers", "fullAccess"), downloadTemplate);
 router.post("/import/validate", requirePermission("customers", "fullAccess"), validateImport);
@@ -682,3 +707,5 @@ router.post("/import/commit", requirePermission("customers", "fullAccess"), comm
 
 module.exports = router;
 module.exports.update = update;
+
+module.exports.resendCustomerActivation = resendCustomerActivation;
