@@ -85,7 +85,7 @@ const createSchema = Joi.object({
 
 
   isInventoryRequired: Joi.boolean().default(false),
-  thresholdCount: Joi.number().integer().min(0).default(0),
+  thresholdCount: Joi.number().integer().min(1).default(1).messages({ "number.min": "Threshold must be at least 1." }),
 
   // Mandatory: the last day this service can be booked (it is hidden from booking afterwards).
   cutoffRequired: Joi.boolean().default(true),
@@ -127,7 +127,7 @@ const updateSchema = Joi.object({
 
 
   isInventoryRequired: Joi.boolean(),
-  thresholdCount: Joi.number().integer().min(0),
+  thresholdCount: Joi.number().integer().min(1).messages({ "number.min": "Threshold must be at least 1." }),
 
   cutoffRequired: Joi.boolean(),
   bookingCutoffDate: Joi.date().allow(null),

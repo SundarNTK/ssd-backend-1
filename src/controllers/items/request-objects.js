@@ -90,7 +90,7 @@ const createSchema = Joi.object({
 
   isInventoryApplicable: Joi.boolean().default(false),
   unitOfMeasure: unitOfMeasureField.allow(null).default(null),
-  threshold: Joi.number().integer().min(0).default(0),
+  threshold: Joi.number().integer().min(1).default(1).messages({ "number.min": "Threshold must be at least 1." }),
   minQuantity: Joi.number().integer().min(1).required(),
   maxQuantity: Joi.number().integer().min(Joi.ref("minQuantity")).required().messages({ "number.min": "Max Quantity cannot be less than Min Quantity." }),
   quantityReduction: Joi.number().integer().min(1).default(1),
@@ -131,7 +131,7 @@ const updateSchema = Joi.object({
 
   isInventoryApplicable: Joi.boolean(),
   unitOfMeasure: unitOfMeasureField.allow(null),
-  threshold: Joi.number().integer().min(0),
+  threshold: Joi.number().integer().min(1).messages({ "number.min": "Threshold must be at least 1." }),
   minQuantity: Joi.number().integer().min(1),
   maxQuantity: Joi.number().integer().min(1),
   quantityReduction: Joi.number().integer().min(1),
