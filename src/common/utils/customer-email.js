@@ -8,6 +8,9 @@ const PLACEHOLDER_SUFFIX = "@no-email.local";
 const PLACEHOLDER_RE = /@no-email\.local$/i;
 
 const placeholderEmail = (mobileNumber) => `walkin.${String(mobileNumber).trim()}${PLACEHOLDER_SUFFIX}`;
+
+/** An address that can never receive mail and belongs to no one, for a booking made with no email at all. */
+const randomPlaceholderEmail = () => `noemail.${require("crypto").randomBytes(5).toString("hex")}${PLACEHOLDER_SUFFIX}`;
 const isPlaceholderEmail = (email) => PLACEHOLDER_RE.test(String(email || ""));
 
-module.exports = { placeholderEmail, isPlaceholderEmail };
+module.exports = { placeholderEmail, randomPlaceholderEmail, isPlaceholderEmail };

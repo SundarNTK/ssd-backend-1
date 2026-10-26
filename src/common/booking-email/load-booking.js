@@ -27,6 +27,17 @@ const realEmail = (value) => {
   return v && !isPlaceholderEmail(v) ? v : "";
 };
 
+/**
+ * The email of the booking's contact person, or "" when there is none. It is the one stored on the booking; the
+ * customer profile's email is used only for older bookings that stored none at all. A booking that stored a
+ * placeholder (no email was given) has NO email - it must not fall back to the profile, which for a booking made
+ * under the signed-in staff member's own profile is the staff member's address.
+ */
+function contactEmail(booking, customer) {
+  const stored = String(booking?.customerDetails?.email || "").trim();
+  return stored ? realEmail(stored) : realEmail(customer?.email);
+}
+
 async function findStore(id) {
   const query = (Model) =>
     Model.findOne(Model.notDeletedFilter({ _id: id }))
@@ -69,7 +80,7 @@ async function loadBooking(id) {
 
   const customer = booking.customer && typeof booking.customer === "object" ? booking.customer : null;
   // Who it goes to by default: the email typed for this booking, else the customer profile's.
-  const recipient = realEmail(booking.customerDetails?.email) || realEmail(customer?.email);
+  const recipient = contactEmail(booking, customer);
 
   return {
     booking,
@@ -84,4 +95,4 @@ async function loadBooking(id) {
   };
 }
 
-module.exports = { loadBooking, realEmail };
+module.exports = { loadBooking, realEmail, contactEmail };

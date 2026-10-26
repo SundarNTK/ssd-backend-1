@@ -4,6 +4,8 @@
  *
  * Money and dates are formatted here (Singapore dollars and Singapore time) so the template needs no helpers.
  */
+const { contactEmail } = require("./load-booking");
+
 const TIME_ZONE = "Asia/Singapore";
 
 const money = (n) => `S$ ${Number(n || 0).toLocaleString("en-SG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -148,7 +150,7 @@ function buildPdfModel(loaded) {
       name: booking.customerDetails?.name || customer?.name || "",
       code: customer?.customerCode || "",
       mobile: booking.customerDetails?.mobileNumber || customer?.mobileNumber || "",
-      email: customer?.email && !/@no-email\.local$/i.test(customer.email) ? customer.email : booking.customerDetails?.email || "",
+      email: contactEmail(booking, customer),
     },
     remarks: booking.remarks || "",
     bookedBy: booking.bookedBy?.name || booking.bookedByInfo?.name || "",
