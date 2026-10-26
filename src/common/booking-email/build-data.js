@@ -25,10 +25,19 @@ const sessionText = (line) => {
   return `${dateOnly(line.sessionDate)}${half}`;
 };
 
+/** "14:00" -> "2:00 PM", "00:30" -> "12:30 AM". A time that is not 24-hour HH:MM (already "6:00 PM") is left as it is. */
+const time12 = (value) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!m) return String(value || "");
+  const hour = Number(m[1]);
+  if (hour > 23) return String(value);
+  return `${hour % 12 || 12}:${m[2]} ${hour < 12 ? "AM" : "PM"}`;
+};
+
 const slotText = (line) => {
   const s = line.eventSlot;
   if (!s) return "";
-  const time = s.startTime ? `${s.startTime}${s.endTime ? ` - ${s.endTime}` : ""}` : "";
+  const time = s.startTime ? `${time12(s.startTime)}${s.endTime ? ` - ${time12(s.endTime)}` : ""}` : "";
   return [s.slotName, s.date ? dateOnly(s.date) : "", time].filter(Boolean).join(" · ");
 };
 
@@ -148,4 +157,4 @@ function buildPdfModel(loaded) {
   };
 }
 
-module.exports = { buildEmailData, buildPdfModel, money, dateTime, dateOnly, sumPaid };
+module.exports = { time12, buildEmailData, buildPdfModel, money, dateTime, dateOnly, sumPaid };
