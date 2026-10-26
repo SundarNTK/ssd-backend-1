@@ -1181,6 +1181,35 @@ async function createPendingPayment({ referenceId, amount: requestedAmount, paym
 }
 
 /**
+ * POST /pos/booking/orders/:id/cancel
+ * Lets go of an order that is still waiting for payment - the cashier changed the payment method, or the customer
+ * walked away - so the stock it holds comes back at once instead of after the 30-minute hold. Refused when the order is
+ * already confirmed or any payment on it has been received. Its open PayNow / NETS / card requests are cancelled too, so
+ * a late settlement of one of them is refused rather than booked against a released order. Safe to repeat.
+ */
+async function cancelOrder(req, res) {
+  try {
+    const orderId = req.params.id;
+    if (!mongoose.isValidObjectId(orderId)) throw "Invalid order ID.";
+    const order = await PosOrder.findOne(PosOrder.notDeletedFilter({ _id: orderId }));
+    if (!order) throw "Order not found.";
+    if (order.orderStatus === "confirmed") throw "This order is already confirmed, so it cannot be cancelled.";
+
+    if (order.orderStatus === "pending") {
+      const paid = await PosTransaction.exists(PosTransaction.notDeletedFilter({ orderId: order._id, paymentStatus: "paid" }));
+      if (paid) throw "A payment has already been received for this order, so it cannot be cancelled.";
+      await PosTransaction.updateMany({ orderId: order._id, paymentStatus: "pending" }, { $set: { paymentStatus: "cancelled" } });
+      await PosOrder.updateOne({ _id: order._id, orderStatus: "pending" }, { $set: { orderStatus: "cancelled" } });
+    }
+    await cancelReservations(order._id, "cancelled by the cashier");
+
+    return responseHandler({ res, response: { _id: order._id, orderStatus: "cancelled" }, successMessage: "Order cancelled - its stock is free again." });
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 400 : undefined });
+  }
+}
+
+/**
  * Fixes a PayNow pending payment's amount AND renders its QR in one call —
  * used both by createOrder below (embeds the result straight into the
  * order-create response as `paymentDetails`, so a brand new PayNow order
@@ -1588,6 +1617,7 @@ registerPaymentHandler(ORIGIN_PREFIXES.POS, confirmPosPayment);
 function registerPosOrderWriteRoutes(r) {
   r.post("/orders", requirePermission("admin-booking", "fullAccess"), validateBody(createOrderSchema), createOrder);
   r.post("/orders/:id/confirm", requirePermission("admin-booking", "fullAccess"), confirmOrder);
+  r.post("/orders/:id/cancel", requirePermission("admin-booking", "fullAccess"), cancelOrder);
   r.get("/orders/:id/status", requirePermission("admin-booking", "view"), getOrderStatus);
   r.post("/orders/:id/nets/initiate", requirePermission("admin-booking", "fullAccess"), initiateNetsPaymentRoute);
   r.post("/nets/initiate", requirePermission("admin-booking", "fullAccess"), initiateNetsByReferenceRoute);
@@ -1637,6 +1667,7 @@ module.exports = {
   // exposed for unit testing, same pattern controllers/pos/index.js uses
   createOrder,
   confirmOrder,
+  cancelOrder,
   getOrderStatus,
   recordBookingPayment,
   writePosBookingFromOrder,
