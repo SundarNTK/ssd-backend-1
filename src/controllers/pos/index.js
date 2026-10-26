@@ -81,7 +81,7 @@ const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
 const { resolveSessionDate, resolveSession } = require("../../common/utils/session-rule");
-const { notPastCutoff } = require("../../common/utils/booking-cutoff");
+const { notPastCutoff, cutoffOf, cutoffPassed } = require("../../common/utils/booking-cutoff");
 const { quantityLimitsOf, assertQuantityLimits } = require("../../common/utils/quantity-limits");
 const { customerDetailsFor } = require("../../common/utils/customer-details");
 const { slotHasStarted } = require("../../common/utils/event-seats");
@@ -502,7 +502,7 @@ async function listPosItems(req, res) {
     const categoryVisField = isAdmin ? "adminBookingVisibility" : "posVisibility";
     const { categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
 
-    const and = [posHierarchyClause(categoryIds, subCategoryIds), notPastCutoff("futureBookingCutOffDate")];
+    const and = [posHierarchyClause(categoryIds, subCategoryIds)];
     const filter = Item.notDeletedFilter({ status: 1, [visField]: true });
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -537,7 +537,7 @@ async function listPosItems(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -566,7 +566,7 @@ async function listPosServices(req, res) {
     const categoryVisField = isAdmin ? "adminBookingVisibility" : "posVisibility";
     const { categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
 
-    const and = [posHierarchyClause(categoryIds, subCategoryIds), notPastCutoff("bookingCutoffDate")];
+    const and = [posHierarchyClause(categoryIds, subCategoryIds)];
     const filter = Service.notDeletedFilter({ status: 1, [visField]: true });
     if (req.query.search) {
       const regex = searchRegex(req.query.search);
@@ -599,7 +599,7 @@ async function listPosServices(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -640,7 +640,7 @@ async function listPosEvents(req, res) {
       .populate({ path: "category", select: "name color" })
       .populate({ path: "deityMapping", select: "name tamilName image color", options: { sort: { displayOrder: 1, name: 1 } } })
       .select(
-        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions recurringRequired futureBookingCutOffDate bookingCutoffDate"
+        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired"
       )
       .sort({ startDate: 1, displayOrder: 1, name: 1 })
       .lean();
@@ -710,7 +710,7 @@ async function listGeneralItems(req, res) {
       GeneralItem.find(filter)
         .populate({ path: "categoryDetails.category", select: "name color", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
         .populate({ path: "categoryDetails.subCategory", select: "name", match: { isDeleted: false, status: 1, [categoryVisField]: POS_VISIBLE } })
-        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold quantityReduction minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate")
+        .select("name tamilName code isInventoryApplicable currentStock reservedStock threshold quantityReduction minQuantity maxQuantity categoryDetails image color favorite sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -756,7 +756,9 @@ async function decorateItems(items) {
     sessionRequired: Boolean(item.sessionRequired),
     availableSessions: item.availableSessions ?? [],
     recurringRequired: Boolean(item.recurringRequired),
-    sessionCutoffDate: item.futureBookingCutOffDate || null,
+    sessionCutoffDate: cutoffOf(item),
+    // Past its cut-off date: still listed, but shown as out of stock and refused at booking.
+    cutoffPassed: cutoffPassed(item),
     favorite: Boolean(item.favorite),
     inventory: availByRefId.get(String(item._id)),
   }));
@@ -782,7 +784,8 @@ async function decorateServices(services) {
     sessionRequired: Boolean(svc.sessionRequired),
     availableSessions: svc.availableSessions ?? [],
     recurringRequired: Boolean(svc.recurringRequired),
-    sessionCutoffDate: svc.bookingCutoffDate || null,
+    sessionCutoffDate: cutoffOf(svc),
+    cutoffPassed: cutoffPassed(svc),
     favorite: Boolean(svc.favorite),
     inventory: availByRefId.get(String(svc._id)),
   }));
@@ -887,8 +890,8 @@ async function getCatalogue(req, res) {
     const { categories, subCategories, categoryIds, subCategoryIds } = await loadHierarchyForPortal(req.posPortal);
     const visible = posHierarchyClause(categoryIds, subCategoryIds);
     const [items, services, generalItems] = await Promise.all([
-      Item.find(Item.notDeletedFilter({ status: 1, ...itemVis, $and: [visible, notPastCutoff("futureBookingCutOffDate")] })).select("categoryDetails"),
-      Service.find(Service.notDeletedFilter({ status: 1, ...serviceVis, $and: [visible, notPastCutoff("bookingCutoffDate")] })).select("categoryDetails"),
+      Item.find(Item.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
+      Service.find(Service.notDeletedFilter({ status: 1, ...serviceVis, $and: [visible] })).select("categoryDetails"),
       GeneralItem.find(GeneralItem.notDeletedFilter({ status: 1, ...itemVis, $and: [visible] })).select("categoryDetails"),
     ]);
     const subCategoryById = new Map(subCategories.map((s) => [String(s._id), s]));
@@ -1017,25 +1020,25 @@ async function getCatalogue(req, res) {
     const [uncategorizedItemsRaw, uncategorizedServicesRaw] = await Promise.all([
       allUncategorizedItemIds.length
         ? decorateItems(
-            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, ...itemVis, $and: [notPastCutoff("futureBookingCutOffDate")] }))
+            await Item.find(Item.notDeletedFilter({ _id: { $in: allUncategorizedItemIds }, status: 1, ...itemVis }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate"
+                "name tamilName code salePrice isInventoryApplicable currentStock reservedStock threshold quantityReduction isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers minQuantity maxQuantity categoryDetails image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired"
               )
           )
         : [],
       allUncategorizedServiceIds.length
         ? decorateServices(
-            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, ...serviceVis, $and: [notPastCutoff("bookingCutoffDate")] }))
+            await Service.find(Service.notDeletedFilter({ _id: { $in: allUncategorizedServiceIds }, status: 1, ...serviceVis }))
               // Sorted by admin-assigned display order (ties alphabetical) so the
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate"
+                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock reservedStock thresholdCount minQuantity maxQuantity isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color sessionRequired availableSessions recurringRequired futureBookingCutOffDate bookingCutoffDate cutoffRequired"
               )
           )
         : [],

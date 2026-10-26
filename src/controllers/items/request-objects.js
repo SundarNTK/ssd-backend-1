@@ -95,8 +95,9 @@ const createSchema = Joi.object({
   maxQuantity: Joi.number().integer().min(Joi.ref("minQuantity")).required().messages({ "number.min": "Max Quantity cannot be less than Min Quantity." }),
   quantityReduction: Joi.number().integer().min(1).default(1),
 
-  // Mandatory: the last day this item can be booked (it is hidden from booking afterwards).
-  futureBookingCutOffDate: Joi.date().required(),
+  // Required when Cut-off Required is Yes: the last day this item can be booked (shown as out of stock afterwards).
+  cutoffRequired: Joi.boolean().default(true),
+  futureBookingCutOffDate: Joi.date().when("cutoffRequired", { is: false, then: Joi.date().allow(null).default(null), otherwise: Joi.date().required() }),
   isFamilyMembersRequired: Joi.boolean().default(false),
   maxFamilyMembers: Joi.number().integer().min(1).default(2),
   posAvailability: Joi.boolean().default(true),
@@ -135,7 +136,8 @@ const updateSchema = Joi.object({
   maxQuantity: Joi.number().integer().min(1),
   quantityReduction: Joi.number().integer().min(1),
 
-  futureBookingCutOffDate: Joi.date(),
+  cutoffRequired: Joi.boolean(),
+  futureBookingCutOffDate: Joi.date().allow(null),
   isFamilyMembersRequired: Joi.boolean(),
   maxFamilyMembers: Joi.number().integer().min(1),
   posAvailability: Joi.boolean(),

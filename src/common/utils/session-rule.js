@@ -36,7 +36,6 @@ function resolveSessionDate(master, line, now = Date.now()) {
   if (!DAY.test(chosen) || Number.isNaN(Date.parse(`${chosen}T00:00:00Z`))) {
     throw `Choose a valid session date for "${master.name}".`;
   }
-  if (chosen < today) throw `The session date for "${master.name}" cannot be in the past.`;
   if (cutoff && chosen > cutoff) throw `The session for "${master.name}" ends on ${cutoff}; choose a date up to then.`;
   return chosen;
 }

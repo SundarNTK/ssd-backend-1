@@ -66,6 +66,7 @@ const serviceSchema = new mongoose.Schema({
   // common/utils/inventory-stock.js. Available to book = currentStock - reservedStock - threshold.
   reservedStock: { type: Number, default: 0, min: 0 },
 
+  cutoffRequired: { type: Boolean },
   bookingCutoffDate: { type: Date, default: null },
   // Quantity a booking starts at / cannot go below, and the most that can be booked per line (0 = no limit: older records).
   minQuantity: { type: Number, default: 1 },

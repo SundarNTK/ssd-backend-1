@@ -62,6 +62,8 @@ const itemSchema = new mongoose.Schema({
   // common/utils/inventory-stock.js. Available to book = currentStock - reservedStock - threshold.
   reservedStock: { type: Number, default: 0, min: 0 },
 
+  // Cut-off Required: Yes needs the date and stops booking after it; No = no cut-off. Unset on older records (they follow their date).
+  cutoffRequired: { type: Boolean },
   futureBookingCutOffDate: { type: Date, default: null },
   isFamilyMembersRequired: { type: Boolean, default: false },
   maxFamilyMembers: { type: Number, default: 2 },
