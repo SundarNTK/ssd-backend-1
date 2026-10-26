@@ -65,6 +65,8 @@ module.exports = {
   // Outgoing emails are spaced out so a burst never exceeds the provider's sending speed
   // (SES allows 1/second in the sandbox, 14/second at first once approved). Optional.
   EMAIL_MAX_PER_SECOND: Math.max(1, Number(process.env.EMAIL_MAX_PER_SECOND) || 5),
+  // Forgot password: most reset emails to one address per hour (see utilities/helpers/forgot-password-limit).
+  FORGOT_PASSWORD_MAX_PER_HOUR: Math.max(1, Number(process.env.FORGOT_PASSWORD_MAX_PER_HOUR) || 3),
   BREVO_API_KEY: process.env.BREVO_API_KEY || "",
   GMAIL_USER: process.env.GMAIL_USER || "",
   GMAIL_APP_PASSWORD: process.env.GMAIL_APP_PASSWORD || "",

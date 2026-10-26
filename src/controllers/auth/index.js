@@ -1,6 +1,8 @@
 const express = require("express");
 const env = require("../../config/env");
 const validateBody = require("../../common/middleware/validate");
+const { forgotPasswordLimiter } = require("../../common/middleware/rate-limit");
+const { assertResetAllowed, recordResetRequest } = require("../../utilities/helpers/forgot-password-limit");
 const authGuard = require("../../common/middleware/auth-guard");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
 const { hashPassword, comparePassword, assertStrongPassword } = require("../../common/utils/password");
@@ -316,6 +318,9 @@ async function forgotPassword(req, res) {
       throw "This account has been deactivated. Please contact your temple administrator.";
     }
 
+    // At most 3 reset emails per address per hour; the link sent before stays valid while this refuses.
+    await assertResetAllowed(user.email);
+
     const rawToken = generateRawToken();
     user.passwordResetTokenHash = hashToken(rawToken);
     user.passwordResetTokenExpiresAt = addMinutes(new Date(), env.RESET_TOKEN_TTL_MINUTES);
@@ -333,6 +338,7 @@ async function forgotPassword(req, res) {
       resetUrl,
       expiresInMinutes: env.RESET_TOKEN_TTL_MINUTES,
     });
+    await recordResetRequest(user.email);
 
     return responseHandler({
       res,
@@ -414,7 +420,7 @@ router.get("/activation/:token", activationTokenInfo);
 router.get("/reset-password/:token", resetTokenInfo);
 
 router.post("/activate", validateBody(activateSchema), activate);
-router.post("/forgot-password", validateBody(forgotPasswordSchema), forgotPassword);
+router.post("/forgot-password", forgotPasswordLimiter, validateBody(forgotPasswordSchema), forgotPassword);
 router.post("/reset-password", validateBody(resetPasswordSchema), resetPassword);
 
 router.put("/pagination-count", authGuard, validateBody(paginationCountSchema), updatePaginationCount);
