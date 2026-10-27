@@ -306,6 +306,37 @@ router.get("/daily-collection/export", requirePermission("reports", "view"), asy
       for (let i = 2; i <= modeNames.length + 1; i += 1) row.getCell(i).numFmt = money;
     });
 
+    // Collection entered by the temple against what the bookings say.
+    const rec = d.reconciliation;
+    const label = { matched: "Matched", excess: "Excess", shortage: "Shortage", "not-entered": "Not entered" };
+    sheet.addRow([]);
+    const rh = sheet.addRow(["Collection entered vs system - by payment mode"]);
+    rh.font = { bold: true, color: { argb: "FF7C1527" } };
+    const rhead = sheet.addRow(["Payment mode", "System ($)", "Entered ($)", "Difference ($)", "Status"]);
+    rhead.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF7C1527" } };
+    });
+    rec.byMode.forEach((m) => {
+      const row = sheet.addRow([m.mode, m.comparedSystem, m.enteredTotal, m.difference, label[m.status] + (m.daysNotEntered ? ` (${m.daysNotEntered} day(s) not entered)` : "")]);
+      [2, 3, 4].forEach((i) => (row.getCell(i).numFmt = money));
+    });
+    const rtotal = sheet.addRow(["TOTAL", rec.totals.comparedSystem, rec.totals.enteredTotal, rec.totals.difference, label[rec.totals.status]]);
+    rtotal.font = { bold: true };
+    [2, 3, 4].forEach((i) => (rtotal.getCell(i).numFmt = money));
+    sheet.addRow([]);
+    const dh = sheet.addRow(["Date", "Payment mode", "System ($)", "Entered ($)", "Difference ($)", "Status", "Remarks"]);
+    dh.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF7C1527" } };
+    });
+    rec.rows.forEach((r) => {
+      const row = sheet.addRow([r.date, r.mode, r.system, r.entered ?? "", r.difference ?? "", label[r.status], r.remarks]);
+      [3, 4, 5].forEach((i) => (row.getCell(i).numFmt = money));
+    });
+    sheet.getColumn(6).width = 34;
+    sheet.getColumn(7).width = 30;
+
     res.setHeader("Content-Type", XLSX_MIME);
     res.setHeader("Content-Disposition", `attachment; filename="daily-collection-summary-${d.from}${d.from === d.to ? "" : `-to-${d.to}`}.xlsx"`);
     await workbook.xlsx.write(res);

@@ -34,7 +34,9 @@ function templeToday(now = Date.now()) {
 
 /** [start, end) of a Singapore day as UTC instants. Throws a plain message for a malformed date. */
 function dayBounds(day) {
-  if (!DAY.test(String(day || "")) || Number.isNaN(Date.parse(`${day}T00:00:00Z`))) throw "Enter a valid date (YYYY-MM-DD).";
+  const parsed = Date.parse(`${day}T00:00:00Z`);
+  // Date.parse lets 2026-02-31 roll over into March; a real calendar day reads back as itself.
+  if (!DAY.test(String(day || "")) || Number.isNaN(parsed) || new Date(parsed).toISOString().slice(0, 10) !== day) throw "Enter a valid date (YYYY-MM-DD).";
   const start = new Date(`${day}T00:00:00+08:00`);
   return { start, end: new Date(start.getTime() + DAY_MS) };
 }

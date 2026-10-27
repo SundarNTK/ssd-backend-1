@@ -95,6 +95,7 @@ const AVAILABLE_MODULES = [
   { key: "hall-availability", label: "Hall Availability", group: "Hall & Meal Management" },
   { key: "hall-bookings", label: "Hall Booking", group: "Hall & Meal Management" },
   { key: "reports", label: "Custom Reports", group: "Reports" },
+  { key: "daily-collections", label: "Daily Collection Entry", group: "Masters" },
 ];
 
 const MODULE_KEYS = AVAILABLE_MODULES.map((m) => m.key);
