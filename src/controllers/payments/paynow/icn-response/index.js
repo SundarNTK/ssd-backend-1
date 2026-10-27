@@ -68,8 +68,8 @@ function extractArmoredMessage(req) {
 
 async function icnResponse(req, res) {
   try {
-    if (getPaynowMode() === "disabled") {
-      return exceptionHandler({ res, error: "PayNow is not enabled on this server.", statusCode: 503 });
+    if (["disabled", "manual"].includes(getPaynowMode())) {
+      return exceptionHandler({ res, error: "PayNow bank notifications are not enabled on this server.", statusCode: 503 });
     }
 
     const armoredMessage = extractArmoredMessage(req);

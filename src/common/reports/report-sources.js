@@ -146,7 +146,7 @@ function deityLookupStages() {
 }
 
 /** One member of the Item Sales union — reshapes Booking/PosBooking's per-line data into one common shape, right after $unwind, so the rest of the pipeline never needs to know which collection a row came from. */
-function itemSalesBranch({ sourceLabel }) {
+function itemSalesBranch({ sourceLabel, byPortal = false }) {
   return [
     { $match: { isDeleted: false, bookingStatus: "confirmed" } },
     { $unwind: "$lines" },
@@ -193,7 +193,8 @@ function itemSalesBranch({ sourceLabel }) {
             in: { $concat: ["$$value", { $cond: [{ $eq: ["$$value", ""] }, "", ", "] }, "$$this"] },
           },
         },
-        _source: sourceLabel,
+        // POS bookings made from the Admin Panel are Admin Bookings, whichever collection holds them.
+        _source: byPortal ? { $cond: [{ $eq: ["$portal", "admin"] }, "Admin Booking", sourceLabel] } : sourceLabel,
       },
     },
     {
@@ -239,9 +240,16 @@ function itemSalesBranch({ sourceLabel }) {
  * HallBookingPayment — the other two collections fold to "" for them
  * rather than the row disappearing or the field simply not existing.
  */
-function paymentBranch({ bookingRefCollection, bookingRefField, sourceLabel }) {
+function paymentBranch({ bookingRefCollection, bookingRefField, sourceLabel, byPortal = false }) {
   return [
     { $match: { isDeleted: false, paymentStatus: { $in: ["paid"] } } },
+    // A POS transaction does not carry its portal; its booking does (Admin Panel bookings live in the same collection).
+    ...(byPortal
+      ? [
+          { $lookup: { from: "pos_bookings", localField: bookingRefField, foreignField: "_id", pipeline: [{ $project: { portal: 1 } }], as: "_portalBooking" } },
+          { $addFields: { _portal: { $ifNull: [{ $arrayElemAt: ["$_portalBooking.portal", 0] }, "pos"] } } },
+        ]
+      : []),
     {
       $addFields: {
         _receiptNo: "$receiptNo",
@@ -257,7 +265,7 @@ function paymentBranch({ bookingRefCollection, bookingRefField, sourceLabel }) {
         _paymentRequestRef: { $ifNull: ["$referenceId", ""] },
         _processedByName: { $ifNull: ["$collectedByInfo.name", "$processedByInfo.name"] },
         _amount: "$amount",
-        _source: sourceLabel,
+        _source: byPortal ? { $cond: [{ $eq: ["$_portal", "admin"] }, "Admin Booking", sourceLabel] } : sourceLabel,
         // POS Counter / Admin Booking payments confirmed by hand (the other collections never are): the flag and the
         // details the person entered.
         _isManuallyConfirmed: { $ifNull: ["$isManuallyConfirmed", false] },
@@ -532,7 +540,7 @@ const REPORT_SOURCES = [
     model: Booking,
     basePipeline: [
       ...itemSalesBranch({ sourceLabel: "Admin Booking" }),
-      { $unionWith: { coll: "pos_bookings", pipeline: itemSalesBranch({ sourceLabel: "POS Counter" }) } },
+      { $unionWith: { coll: "pos_bookings", pipeline: itemSalesBranch({ sourceLabel: "POS Counter", byPortal: true }) } },
     ],
     defaultSort: { field: "saleDate", dir: "desc" },
     fields: [
@@ -596,7 +604,7 @@ const REPORT_SOURCES = [
       {
         $unionWith: {
           coll: "pos_transactions",
-          pipeline: paymentBranch({ bookingRefCollection: "pos_bookings", bookingRefField: "bookingId", sourceLabel: "POS Counter" }),
+          pipeline: paymentBranch({ bookingRefCollection: "pos_bookings", bookingRefField: "bookingId", sourceLabel: "POS Counter", byPortal: true }),
         },
       },
     ],

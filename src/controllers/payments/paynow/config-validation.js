@@ -124,7 +124,8 @@ async function jarProblems() {
  */
 async function assertPaynowReadyAtStartup(config = env) {
   const mode = getPaynowMode();
-  if (mode === "disabled") return "PayNow is OFF on this server (PAYNOW_MODE is not set).";
+  if (mode === "disabled") return "PayNow is OFF on this server.";
+  if (mode === "manual") return "PayNow mode: manual - no QR, payments are confirmed by hand.";
   if (mode === "development") return "PayNow mode: development — mock QR codes (not payable) and mock confirmation only.";
 
   const problems = productionConfigProblems(config);

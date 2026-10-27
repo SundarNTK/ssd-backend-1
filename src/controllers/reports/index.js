@@ -10,6 +10,7 @@ const ReportDefinition = require("../../models/report-definitions");
 const { listReportSourcesForClient, getReportSource } = require("../../common/reports/report-sources");
 const { runReport, runReportForExport, MAX_EXPORT_ROWS } = require("../../common/reports/report-runner");
 const { runSchema, saveDefinitionSchema, updateDefinitionSchema } = require("./request-objects");
+const { buildDailyCollection } = require("../../common/reports/daily-collection");
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -242,6 +243,75 @@ router.post("/definitions/:id/run", requirePermission("reports", "view"), async 
     return responseHandler({ res, response: result });
   } catch (error) {
     return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 404 : undefined });
+  }
+});
+
+// ---- GET /reports/daily-collection?from=&to= — collection totals per payment mode / source / cashier ----
+router.get("/daily-collection", requirePermission("reports", "view"), async (req, res) => {
+  try {
+    const summary = await buildDailyCollection({ from: req.query.from, to: req.query.to });
+    return responseHandler({ res, response: summary });
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 422 : undefined });
+  }
+});
+
+// ---- GET /reports/daily-collection/export?from=&to= — the same summary as an .xlsx ----
+router.get("/daily-collection/export", requirePermission("reports", "view"), async (req, res) => {
+  try {
+    const d = await buildDailyCollection({ from: req.query.from, to: req.query.to });
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Collection Summary");
+    const period = d.from === d.to ? d.from : `${d.from} to ${d.to}`;
+    const money = "#,##0.00";
+    sheet.columns = [{ width: 30 }, { width: 14 }, { width: 16 }, { width: 22 }, { width: 22 }];
+
+    const title = sheet.addRow([`Daily Collection Summary - ${period}`]);
+    title.font = { bold: true, size: 14, color: { argb: "FF7C1527" } };
+    sheet.addRow([]);
+
+    const section = (heading, labelHeader, rows, labelKey) => {
+      const h = sheet.addRow([heading]);
+      h.font = { bold: true, color: { argb: "FF7C1527" } };
+      const head = sheet.addRow([labelHeader, "Payments", "Amount ($)", "Manually confirmed (count)", "Manually confirmed ($)"]);
+      head.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF7C1527" } };
+      });
+      rows.forEach((r) => {
+        const row = sheet.addRow([r[labelKey], r.count, r.total, r.manualCount, r.manualTotal]);
+        row.getCell(3).numFmt = money;
+        row.getCell(5).numFmt = money;
+      });
+      sheet.addRow([]);
+    };
+
+    section("By payment mode", "Payment mode", d.byMode, "mode");
+    const totalRow = sheet.addRow(["GRAND TOTAL", d.grand.count, d.grand.total, d.grand.manualCount, d.grand.manualTotal]);
+    totalRow.font = { bold: true };
+    totalRow.getCell(3).numFmt = money;
+    totalRow.getCell(5).numFmt = money;
+    sheet.addRow([]);
+    section("By source", "Source", d.bySource, "source");
+    section("By cashier", "Processed by", d.byCashier, "cashier");
+
+    const modeNames = d.byMode.map((m) => m.mode);
+    const mh = sheet.addRow(["Source by payment mode ($)", ...modeNames]);
+    mh.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF7C1527" } };
+    });
+    d.sourceModeMatrix.forEach((r) => {
+      const row = sheet.addRow([r.source, ...modeNames.map((m) => r.modes[m] ?? 0)]);
+      for (let i = 2; i <= modeNames.length + 1; i += 1) row.getCell(i).numFmt = money;
+    });
+
+    res.setHeader("Content-Type", XLSX_MIME);
+    res.setHeader("Content-Disposition", `attachment; filename="daily-collection-summary-${d.from}${d.from === d.to ? "" : `-to-${d.to}`}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 422 : undefined });
   }
 });
 

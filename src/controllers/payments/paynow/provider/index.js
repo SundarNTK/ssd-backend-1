@@ -15,6 +15,8 @@ function getPaynowProvider() {
       return require("./live-provider");
     case "development":
       return require("./mock-provider");
+    case "manual":
+      return require("./manual-provider");
     default:
       return require("./disabled-provider");
   }
