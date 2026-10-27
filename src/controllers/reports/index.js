@@ -123,7 +123,7 @@ router.get("/export", requirePermission("reports", "view"), async (req, res) => 
       const flat = {};
       columns.forEach((c) => {
         const value = row[c.key];
-        if (c.type === "date" && value) flat[c.key] = new Date(value).toISOString().slice(0, 10);
+        if (c.type === "date" && value) flat[c.key] = new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10); // the temple (Singapore) day
         else if (c.type === "boolean") flat[c.key] = value ? "Yes" : "No";
         else flat[c.key] = value ?? "";
       });

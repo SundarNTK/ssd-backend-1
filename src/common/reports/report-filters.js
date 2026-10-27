@@ -32,33 +32,43 @@ function castValue(field, value) {
   return String(value);
 }
 
-/** Local-time day boundaries — a report filter means "the admin's day", not UTC midnight. */
-function dayBounds(date) {
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(date);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
+const SGT_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The temple's (Singapore) calendar day of a "YYYY-MM-DD" string or of an instant, as "YYYY-MM-DD". */
+function templeDay(value) {
+  if (typeof value === "string" && DAY.test(value)) return value;
+  return new Date(new Date(value).getTime() + SGT_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+const shiftDay = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * [start, end] (inclusive) of a temple day as instants. A report filter means "the temple's day", not the server's:
+ * "27 Oct" is 27 Oct 00:00 - 23:59:59.999 in Singapore wherever the server runs.
+ */
+function dayBounds(value) {
+  const start = new Date(`${templeDay(value)}T00:00:00+08:00`);
+  if (Number.isNaN(start.getTime())) throw "Enter a valid date.";
+  return { start, end: new Date(start.getTime() + DAY_MS - 1) };
 }
 
 function dateShortcutRange(operator) {
-  const now = new Date();
-  if (operator === "today") return dayBounds(now);
-  if (operator === "yesterday") {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    return dayBounds(y);
-  }
+  const today = templeDay(new Date());
+  if (operator === "today") return dayBounds(today);
+  if (operator === "yesterday") return dayBounds(shiftDay(today, -1));
   if (operator === "thisWeek") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - now.getDay());
-    return { start: dayBounds(start).start, end: dayBounds(now).end };
+    const weekday = new Date(`${today}T00:00:00Z`).getUTCDay(); // Sunday = 0, as before
+    return { start: dayBounds(shiftDay(today, -weekday)).start, end: dayBounds(today).end };
   }
   if (operator === "thisMonth") {
-    return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: dayBounds(now).end };
+    return { start: dayBounds(`${today.slice(0, 8)}01`).start, end: dayBounds(today).end };
   }
   if (operator === "lastMonth") {
-    return { start: new Date(now.getFullYear(), now.getMonth() - 1, 1), end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999) };
+    const firstThis = `${today.slice(0, 8)}01`;
+    const lastOfPrev = shiftDay(firstThis, -1);
+    return { start: dayBounds(`${lastOfPrev.slice(0, 8)}01`).start, end: dayBounds(lastOfPrev).end };
   }
   return null;
 }
@@ -88,8 +98,9 @@ function buildConditionMatch(field, operator, rawValue, rawValueTo) {
     if (rawValue === undefined || rawValue === null || rawValueTo === undefined || rawValueTo === null) {
       throw `"${field.label}" needs both a from and a to value for "between".`;
     }
-    const from = castValue(field, rawValue);
-    const to = field.type === "date" ? dayBounds(castValue(field, rawValueTo)).end : castValue(field, rawValueTo);
+    const isDate = field.type === "date";
+    const from = isDate ? dayBounds(rawValue).start : castValue(field, rawValue);
+    const to = isDate ? dayBounds(rawValueTo).end : castValue(field, rawValueTo);
     return { [path]: { $gte: from, $lte: to } };
   }
 
@@ -102,6 +113,14 @@ function buildConditionMatch(field, operator, rawValue, rawValueTo) {
     throw `"${field.label}" needs a value for "${operator}".`;
   }
   const value = castValue(field, rawValue);
+
+  // A date is a whole day: "equals" is any moment of that day, "before" is before it starts, "after" is after it ends.
+  if (field.type === "date" && !field.options) {
+    const { start, end } = dayBounds(rawValue);
+    if (operator === "equals") return { [path]: { $gte: start, $lte: end } };
+    if (operator === "before") return { [path]: { $lt: start } };
+    if (operator === "after") return { [path]: { $gt: end } };
+  }
 
   switch (operator) {
     case "equals":
