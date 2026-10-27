@@ -256,6 +256,16 @@ function paymentBranch({ bookingRefCollection, bookingRefField, sourceLabel }) {
         _processedByName: { $ifNull: ["$collectedByInfo.name", "$processedByInfo.name"] },
         _amount: "$amount",
         _source: sourceLabel,
+        // POS Counter / Admin Booking payments confirmed by hand (the other collections never are): the flag and the
+        // details the person entered.
+        _isManuallyConfirmed: { $ifNull: ["$isManuallyConfirmed", false] },
+        _manualRefNo: { $ifNull: ["$manualConfirmationDetails.transactionRefNo", ""] },
+        _manualPaidAt: { $ifNull: ["$manualConfirmationDetails.paidAt", null] },
+        _manualPayerName: { $ifNull: [{ $ifNull: ["$manualConfirmationDetails.payerName", "$manualConfirmationDetails.senderParty.name"] }, ""] },
+        _manualPayerBank: { $ifNull: ["$manualConfirmationDetails.payerBank", ""] },
+        _manualRemarks: { $ifNull: ["$manualConfirmationDetails.remarks", ""] },
+        _manualConfirmedBy: { $ifNull: ["$manualConfirmationDetails.confirmedByName", ""] },
+        _manualConfirmedAt: { $ifNull: ["$manualConfirmationDetails.confirmedAt", null] },
       },
     },
     {
@@ -272,6 +282,14 @@ function paymentBranch({ bookingRefCollection, bookingRefField, sourceLabel }) {
         _processedByName: 1,
         _amount: 1,
         _source: 1,
+        _isManuallyConfirmed: 1,
+        _manualRefNo: 1,
+        _manualPaidAt: 1,
+        _manualPayerName: 1,
+        _manualPayerBank: 1,
+        _manualRemarks: 1,
+        _manualConfirmedBy: 1,
+        _manualConfirmedAt: 1,
       },
     },
   ];
@@ -585,6 +603,16 @@ const REPORT_SOURCES = [
       { key: "processedByName", label: "Collected / Processed By", type: "string", path: "_processedByName" },
       { key: "amount", label: "Amount", type: "number", path: "_amount" },
       { key: "source", label: "Source", type: "string", path: "_source", options: ["Hall Booking", "Admin Booking", "POS Counter"] },
+      // Payments confirmed by hand (PayNow / NETS / card entered by the cashier or an admin): filter on "Manually
+      // Confirmed = Yes" for the list, and add the columns below for what was entered.
+      { key: "isManuallyConfirmed", label: "Manually Confirmed", type: "boolean", path: "_isManuallyConfirmed" },
+      { key: "manualRefNo", label: "Manual Confirmation Ref No", type: "string", path: "_manualRefNo" },
+      { key: "manualPaidAt", label: "Manual - Payment Date", type: "date", path: "_manualPaidAt" },
+      { key: "manualPayerName", label: "Manual - Payer Name", type: "string", path: "_manualPayerName" },
+      { key: "manualPayerBank", label: "Manual - Payer Bank", type: "string", path: "_manualPayerBank" },
+      { key: "manualRemarks", label: "Manual - Remarks", type: "string", path: "_manualRemarks" },
+      { key: "manualConfirmedBy", label: "Manual - Confirmed By", type: "string", path: "_manualConfirmedBy" },
+      { key: "manualConfirmedAt", label: "Manual - Confirmed At", type: "date", path: "_manualConfirmedAt" },
     ],
   },
 ];

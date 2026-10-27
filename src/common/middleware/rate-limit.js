@@ -35,7 +35,7 @@ function isPublicPortalRead(req) {
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 300,
+  limit: env.API_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => isDisplayPoll(req) || isPublicPortalRead(req),

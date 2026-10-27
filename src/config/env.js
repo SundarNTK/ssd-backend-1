@@ -67,6 +67,8 @@ module.exports = {
   EMAIL_MAX_PER_SECOND: Math.max(1, Number(process.env.EMAIL_MAX_PER_SECOND) || 5),
   // Forgot password: most reset emails to one address per hour (see utilities/helpers/forgot-password-limit).
   FORGOT_PASSWORD_MAX_PER_HOUR: Math.max(1, Number(process.env.FORGOT_PASSWORD_MAX_PER_HOUR) || 3),
+  // General API limit per IP per 15 minutes (see common/middleware/rate-limit). Raise it for local work or a busy counter.
+  API_RATE_LIMIT_MAX: Math.max(1, Number(process.env.API_RATE_LIMIT_MAX) || 1500),
   BREVO_API_KEY: process.env.BREVO_API_KEY || "",
   GMAIL_USER: process.env.GMAIL_USER || "",
   GMAIL_APP_PASSWORD: process.env.GMAIL_APP_PASSWORD || "",

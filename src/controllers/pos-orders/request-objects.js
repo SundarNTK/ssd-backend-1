@@ -100,6 +100,12 @@ const initiateNetsByReferenceSchema = Joi.object({
 const manualTerminalConfirmSchema = Joi.object({
   referenceId: Joi.string().trim().required(),
   transactionRefNo: Joi.string().trim().min(1).max(100).required(),
+  // What the person confirming by hand records about the payment (all optional here; PayNow's form requires the date):
+  // when it was paid, who paid, from which bank, and a note. Stored with the confirmation for audit and reports.
+  paidAt: Joi.date().optional(),
+  payerName: Joi.string().trim().allow("").max(150),
+  payerBank: Joi.string().trim().allow("").max(100),
+  remarks: Joi.string().trim().allow("").max(300),
 });
 
 module.exports = {

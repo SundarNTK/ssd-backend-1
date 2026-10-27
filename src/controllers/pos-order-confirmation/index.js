@@ -198,15 +198,22 @@ async function confirmManually(req, res) {
     if (error) throw error.details[0].message;
 
     const { gatewayReference, ...auditFields } = value;
-    const hasAuditFields = Object.keys(auditFields).length > 0;
 
     const result = await dispatchPaymentConfirmation(referenceId, {
       gatewayReference,
       processedBy: req.auth?.userId ?? null,
-      // Pure audit trail (txnType/txnDate/valueDt/receivingParty/
-      // senderParty) — see request-objects.js's own comment. Not used for
-      // idempotency/matching by confirmPosPayment, only stored.
-      manualConfirmationDetails: hasAuditFields ? auditFields : null,
+      // The audit trail (txnType/txnDate/valueDt/receivingParty/senderParty) - see request-objects.js's own comment.
+      // Always present, even with none of those filled in: it is what marks the payment as manually confirmed (the
+      // reference, who confirmed and when are recorded every time).
+      manualConfirmationDetails: {
+        ...auditFields,
+        source: "Order Confirmation",
+        transactionRefNo: gatewayReference,
+        paidAt: auditFields.txnDate ?? auditFields.valueDt ?? null,
+        confirmedBy: req.auth?.userId ?? null,
+        confirmedByName: req.auth?.user?.name ?? "",
+        confirmedAt: new Date(),
+      },
     });
 
     return responseHandler({

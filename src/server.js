@@ -5,6 +5,7 @@ const { startReservationCleanupJob } = require("./utilities/helpers/release-expi
 const { startStockReserveJob } = require("./utilities/helpers/process-stock-reserves");
 const { reconcileReservedStock } = require("./controllers/pos/inventory-reservation");
 const { ensureDefaultEmailTemplatesForAllEntities } = require("./seed/seedEmailTemplates");
+const { backfillManualConfirmationFlags } = require("./utilities/helpers/backfill-manual-confirmation");
 const { assertPaynowReadyAtStartup } = require("./controllers/payments/paynow/config-validation");
 
 async function start() {
@@ -18,6 +19,9 @@ async function start() {
   // Default email templates (account activation, password reset, booking confirmation): created on the first start
   // after a deploy if missing, skipped if they already exist. Safe to run on every start.
   await ensureDefaultEmailTemplatesForAllEntities();
+
+  // Payments confirmed by hand before the "manually confirmed" flags existed get the flags (no-op once done).
+  await backfillManualConfirmationFlags();
 
   // Start the inventory-reservation expiry cleanup job.
   // Runs every minute — releases held stock for orders that were

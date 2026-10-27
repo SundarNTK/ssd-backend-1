@@ -97,6 +97,10 @@ const posTransactionSchema = new mongoose.Schema({
   // party). Never set by a real gateway/terminal webhook — those only ever
   // set gatewayReference.
   manualConfirmationDetails: { type: mongoose.Schema.Types.Mixed, default: null },
+  // True when a person confirmed this payment by hand (the cashier / admin entered the bank or terminal reference
+  // instead of the gateway confirming it itself). Kept as its own flag, beside the details above, so every list and
+  // report can pick out the manually confirmed payments with one indexed condition.
+  isManuallyConfirmed: { type: Boolean, default: false },
 
   // Set only by a genuine automatic gateway/terminal confirmation — the
   // NETS/Credit Card machine's own response (approval code, terminal id,
@@ -140,6 +144,7 @@ posTransactionSchema.index({ gatewayReference: 1 }, { sparse: true });
 // directly, so it must never collide across rows the way gatewayReference
 // (audit-only now) is allowed to.
 posTransactionSchema.index({ referenceId: 1 }, { unique: true, sparse: true });
+posTransactionSchema.index({ isManuallyConfirmed: 1, transactionDate: -1 });
 
 module.exports = {
   PosTransaction: mongoose.model("PosTransaction", posTransactionSchema, "pos_transactions"),

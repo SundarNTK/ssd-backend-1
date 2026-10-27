@@ -700,11 +700,14 @@ async function listBookings(req, res) {
     if (req.query.paymentStatus && ["paid", "partial", "pending"].includes(req.query.paymentStatus)) {
       filter.paymentStatus = req.query.paymentStatus;
     }
+    // Only bookings with a payment that was confirmed by hand.
+    if (req.query.manual === "true") filter.hasManualConfirmation = true;
     if (req.query.search) {
       const regex = new RegExp(escapeRegex(req.query.search.trim()), "i");
       const [matchingCustomers, matchingTransactions] = await Promise.all([
         Customer.find(Customer.notDeletedFilter({ name: regex })).select("_id"),
-        PosTransaction.find(PosTransaction.notDeletedFilter({ receiptNo: regex })).select("bookingId"),
+        // A receipt number, or the bank / terminal reference of a payment (what manual confirmation records).
+        PosTransaction.find(PosTransaction.notDeletedFilter({ $or: [{ receiptNo: regex }, { gatewayReference: regex }] })).select("bookingId"),
       ]);
       filter.$or = [
         { bookingNumber: regex },
@@ -718,7 +721,7 @@ async function listBookings(req, res) {
         .populate("customer", "customerCode name email mobileNumber")
         .populate("orderId", "orderNumber referenceId")
         .select(
-          "bookingNumber orderId customer customerDetails remarks lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt"
+          "bookingNumber orderId customer customerDetails remarks lines subtotal gstAmount grandTotal paymentModeName paymentStatus bookingStatus portal reprintCount bookedAt hasManualConfirmation"
         )
         .sort({ bookedAt: -1 })
         // listWindow lets the Admin Panel's merged ledger ask for an exact slice.
@@ -781,6 +784,7 @@ async function listBookings(req, res) {
         bookingStatus: b.bookingStatus,
         portal: b.portal ?? "pos",
         reprintCount: b.reprintCount ?? 0,
+        hasManualConfirmation: Boolean(b.hasManualConfirmation),
         bookedAt: b.bookedAt,
       };
     });
@@ -813,7 +817,7 @@ async function getBookingDetail(req, res) {
       // payment that was actually collected. Matches sumPaidAmount below,
       // which already only counts "paid" toward amountPaid.
       PosTransaction.find(PosTransaction.notDeletedFilter({ bookingId: id, paymentStatus: "paid" }))
-        .select("receiptNo amount paymentStatus paymentModeName transactionDate processedBy")
+        .select("receiptNo amount paymentStatus paymentModeName transactionDate processedBy gatewayReference isManuallyConfirmed manualConfirmationDetails")
         .populate("processedBy", "name email")
         .sort({ transactionDate: 1 }),
     ]);
@@ -1410,8 +1414,14 @@ async function manualConfirmTerminalPayment(req, res) {
       gatewayReference: value.transactionRefNo,
       processedBy: req.auth?.userId ?? null,
       manualConfirmationDetails: {
+        source: req.posPortal === "admin" ? "Admin Panel" : "POS",
         transactionRefNo: value.transactionRefNo,
+        paidAt: value.paidAt ?? null,
+        payerName: value.payerName || "",
+        payerBank: value.payerBank || "",
+        remarks: value.remarks || "",
         confirmedBy: req.auth?.userId ?? null,
+        confirmedByName: req.auth?.user?.name ?? "",
         confirmedAt: new Date(),
       },
     });
@@ -1539,9 +1549,34 @@ async function confirmPosPayment(referenceId, details = {}) {
   const order = await PosOrder.findOne(PosOrder.notDeletedFilter({ _id: pending.orderId }));
   if (!order) throw `No POS order found for this payment.`;
 
-  if (pending.expiresAt && pending.expiresAt < new Date()) {
+  const manual = details.manualConfirmationDetails != null;
+  // A person confirming by hand is attesting that the money has been received, so the 15-minute QR window does not
+  // apply to them (the customer may well have paid right at the end of it). A real gateway message still has to
+  // arrive inside the window.
+  if (!manual && pending.expiresAt && pending.expiresAt < new Date()) {
     await PosTransaction.findByIdAndUpdate(pending._id, { paymentStatus: "expired" });
     throw `The payment window for reference "${referenceId}" has expired — generate a new QR and try again.`;
+  }
+
+  if (manual) {
+    const m = details.manualConfirmationDetails;
+    if (m.paidAt) {
+      const paidAt = new Date(m.paidAt).getTime();
+      if (Number.isNaN(paidAt)) throw "Enter a valid payment date and time.";
+      if (paidAt > Date.now() + 5 * 60 * 1000) throw "The payment date and time cannot be in the future.";
+    }
+    // PayNow: the bank's own transaction reference. It must look like one, and one payment can only be entered once -
+    // the same reference typed again (for another booking) would otherwise book money that was received only once.
+    if (String(pending.paymentModeName).toUpperCase() === "PAYNOW") {
+      const ref = String(details.gatewayReference || "").trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9\-_/]{5,}$/.test(ref)) {
+        throw "Enter the PayNow transaction reference from the bank (at least 6 letters or numbers).";
+      }
+      const used = await PosTransaction.findOne(
+        PosTransaction.notDeletedFilter({ gatewayReference: new RegExp(`^${require("../../common/utils/escape-regex")(ref)}$`, "i"), paymentStatus: "paid", _id: { $ne: pending._id } })
+      ).select("receiptNo");
+      if (used) throw `This PayNow reference was already used to confirm another payment (receipt ${used.receiptNo}). Check the reference and try again.`;
+    }
   }
 
   if (details.amount != null && Math.abs(details.amount - pending.amount) > 0.005) {
@@ -1558,6 +1593,8 @@ async function confirmPosPayment(referenceId, details = {}) {
         paymentStatus: "paid",
         gatewayReference: details.gatewayReference ?? null,
         processedBy: details.processedBy ?? null,
+        // Flagged at the same moment as the payment itself, so the two can never disagree.
+        ...(manual ? { isManuallyConfirmed: true } : {}),
         // Set only by controllers/pos-order-confirmation's manual admin
         // path — undefined (and so left off `$set`) for a real gateway/
         // terminal webhook, so this stays null on that path.
@@ -1575,6 +1612,7 @@ async function confirmPosPayment(referenceId, details = {}) {
   // First payment for this order — nothing confirmed yet.
   if (order.orderStatus !== "confirmed") {
     const booking = await writePosBookingOnly(order, claimed.amount, claimed);
+    if (claimed.isManuallyConfirmed) await PosBooking.updateOne({ _id: booking._id }, { $set: { hasManualConfirmation: true } });
     return {
       alreadyProcessed: false,
       _id: booking._id,
@@ -1595,6 +1633,7 @@ async function confirmPosPayment(referenceId, details = {}) {
   ).select("amount paymentStatus");
   const amountPaid = sumPaidAmount(paidTransactions);
   booking.paymentStatus = derivePaymentStatus(amountPaid, booking.grandTotal);
+  if (claimed.isManuallyConfirmed) booking.hasManualConfirmation = true;
   await booking.save();
 
   return {

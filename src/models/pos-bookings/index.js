@@ -106,6 +106,9 @@ const posBookingSchema = new mongoose.Schema({
   portal: { type: String, enum: ["pos", "admin"], default: "pos" },
   ...require("../../common/utils/booking-reprint").reprintFields,
   ...require("../../common/booking-email/email-log").emailLogFields,
+  // True when any payment on this booking was confirmed by hand (see PosTransaction.isManuallyConfirmed), so the
+  // Transactions list can show and filter them without reading every payment.
+  hasManualConfirmation: { type: Boolean, default: false },
   bookedAt: { type: Date, required: true },
 
   // Denormalized snapshots — see common/utils/entity-snapshot.
@@ -126,6 +129,7 @@ posBookingSchema.pre("save", async function populatePosBookingSnapshots() {
 posBookingSchema.plugin(auditablePlugin);
 
 posBookingSchema.index({ bookingNumber: 1 }, { unique: true });
+posBookingSchema.index({ hasManualConfirmation: 1, bookedAt: -1 });
 posBookingSchema.index({ customer: 1, createdAt: -1 });
 posBookingSchema.index({ bookingStatus: 1, createdAt: -1 });
 posBookingSchema.index({ paymentStatus: 1, createdAt: -1 });

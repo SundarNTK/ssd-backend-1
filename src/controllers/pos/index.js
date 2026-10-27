@@ -2510,9 +2510,11 @@ async function adminListBookings(req, res) {
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
     const skip = (page - 1) * pageSize;
 
+    // The older Admin store has no manually confirmed payments, so that filter lists only the newer one.
+    const manualOnly = req.query.manual === "true";
     const [posCount, legacyCount] = await Promise.all([
       captureList(posOrders.listBookings, req, { skip: 0, limit: 1 }),
-      captureList(listBookings, req, { skip: 0, limit: 1 }),
+      manualOnly ? { total: 0, items: [] } : captureList(listBookings, req, { skip: 0, limit: 1 }),
     ]);
     const posTotal = posCount.total;
     const items = [];
@@ -2521,7 +2523,7 @@ async function adminListBookings(req, res) {
       items.push(...part.items);
     }
     const remaining = pageSize - items.length;
-    if (remaining > 0) {
+    if (remaining > 0 && !manualOnly) {
       const part = await captureList(listBookings, req, { skip: Math.max(0, skip - posTotal), limit: remaining });
       items.push(...part.items);
     }
