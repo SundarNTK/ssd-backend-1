@@ -707,7 +707,7 @@ async function listBookings(req, res) {
       const [matchingCustomers, matchingTransactions] = await Promise.all([
         Customer.find(Customer.notDeletedFilter({ name: regex })).select("_id"),
         // A receipt number, or the bank / terminal reference of a payment (what manual confirmation records).
-        PosTransaction.find(PosTransaction.notDeletedFilter({ $or: [{ receiptNo: regex }, { gatewayReference: regex }] })).select("bookingId"),
+        PosTransaction.find(PosTransaction.notDeletedFilter({ $or: [{ receiptNo: regex }, { gatewayReference: regex }, { referenceId: regex }] })).select("bookingId"),
       ]);
       filter.$or = [
         { bookingNumber: regex },
@@ -817,7 +817,7 @@ async function getBookingDetail(req, res) {
       // payment that was actually collected. Matches sumPaidAmount below,
       // which already only counts "paid" toward amountPaid.
       PosTransaction.find(PosTransaction.notDeletedFilter({ bookingId: id, paymentStatus: "paid" }))
-        .select("receiptNo amount paymentStatus paymentModeName transactionDate processedBy gatewayReference isManuallyConfirmed manualConfirmationDetails")
+        .select("receiptNo referenceId amount paymentStatus paymentModeName transactionDate processedBy gatewayReference isManuallyConfirmed manualConfirmationDetails terminalConfirmationDetails")
         .populate("processedBy", "name email")
         .sort({ transactionDate: 1 }),
     ]);
@@ -1420,6 +1420,18 @@ async function manualConfirmTerminalPayment(req, res) {
         payerName: value.payerName || "",
         payerBank: value.payerBank || "",
         remarks: value.remarks || "",
+        // The slip details, only the ones entered, named like the terminal's own response (cardNumber is masked).
+        terminalDetails: Object.fromEntries(
+          Object.entries({
+            terminalId: value.terminalId,
+            approvalCode: value.approvalCode,
+            cardType: value.cardType,
+            cardNumber: value.cardLast4 ? `XXXXXXXXXXXX${value.cardLast4}` : "",
+            batchNumber: value.batchNumber,
+            stan: value.stan,
+            retrievalReferenceNumber: value.retrievalReferenceNumber,
+          }).filter(([, v]) => v)
+        ),
         confirmedBy: req.auth?.userId ?? null,
         confirmedByName: req.auth?.user?.name ?? "",
         confirmedAt: new Date(),

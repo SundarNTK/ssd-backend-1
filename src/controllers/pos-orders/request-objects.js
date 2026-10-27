@@ -106,6 +106,15 @@ const manualTerminalConfirmSchema = Joi.object({
   payerName: Joi.string().trim().allow("").max(150),
   payerBank: Joi.string().trim().allow("").max(100),
   remarks: Joi.string().trim().allow("").max(300),
+  // NETS / Credit Card only: what the terminal's printed slip shows. Stored under the same names the terminal's own
+  // automatic confirmation uses (see terminalConfirmationDetails), so manual and automatic payments read alike.
+  terminalId: Joi.string().trim().allow("").max(50),
+  approvalCode: Joi.string().trim().allow("").max(50),
+  cardType: Joi.string().trim().allow("").max(40),
+  cardLast4: Joi.string().trim().allow("").pattern(/^\d{4}$/).messages({ "string.pattern.base": "Card last 4 digits must be exactly 4 numbers." }),
+  batchNumber: Joi.string().trim().allow("").max(30),
+  stan: Joi.string().trim().allow("").max(30),
+  retrievalReferenceNumber: Joi.string().trim().allow("").max(50),
 });
 
 module.exports = {
