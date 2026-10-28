@@ -169,3 +169,24 @@ describe("buildTicketGroups", () => {
     expect(durgasLine.devotees).toEqual([durgasDevotee]);
   });
 });
+
+describe("service-wise ticket grouping", () => {
+  test("one service over 4 deities: deities sharing a print group share a ticket, the other group gets its own", () => {
+    const gods = [deity("d1", "A", "gA", "A"), deity("d2", "B", "gA", "A"), deity("d3", "C", "gA", "A"), deity("d4", "D", "gB", "B")];
+    const svc = line("Archana", "ARC", { refType: "Service", quantity: 4, lineTotal: 4 });
+    const units = resolveLineUnits(svc, { isDeityMappingRequired: true }, gods);
+    const tickets = buildTicketGroups(units, "PRINT_GROUP_WISE");
+    expect(tickets).toHaveLength(2);
+    expect(tickets[0].lines.map((l) => l.deityName)).toEqual(["A", "B", "C"]);
+    expect(tickets[1].lines.map((l) => l.deityName)).toEqual(["D"]);
+  });
+
+  test("two different services for the same print group still print separately", () => {
+    const g = deity("d1", "A", "gA", "A");
+    const units = [
+      ...resolveLineUnits(line("S1", "S1", { refType: "Service" }), { isDeityMappingRequired: true }, [g]),
+      ...resolveLineUnits(line("S2", "S2", { refType: "Service" }), { isDeityMappingRequired: true }, [g]),
+    ];
+    expect(buildTicketGroups(units, "PRINT_GROUP_WISE")).toHaveLength(2);
+  });
+});

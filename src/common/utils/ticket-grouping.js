@@ -183,11 +183,11 @@ function groupUnitsByKey(units, keyFn, headerFn) {
  * ticket because they share the deity's Print Group; now each prints on its
  * own ticket. Items and General Items keep following the setting.
  *
- * One ticket per (line, deity) unit: a service line that fans out over
- * several deities still prints one ticket per deity, because each deity has
- * its own Print Group (its own sanctum/printer) — merging those would send
- * one deity's archana to another's printer. A service with no deity is one
- * ticket, as before.
+ * One ticket per (line, Print Group): a service line that fans out over
+ * several deities prints ONE ticket for all its deities that share a Print
+ * Group (the ticket lists each deity under the service), and a separate
+ * ticket for each other Print Group — so one deity's archana never goes to
+ * another group's printer.
  */
 const SERVICE_WISE_REF_TYPES = new Set(["Service", "Event"]);
 
@@ -238,7 +238,7 @@ function buildTicketGroups(units, splitMode) {
   const lineNumbers = new Map();
   const serviceKey = (unit) => {
     if (!lineNumbers.has(unit.line)) lineNumbers.set(unit.line, lineNumbers.size);
-    return `service:${lineNumbers.get(unit.line)}:${unit.deityId ?? "-"}`;
+    return `service:${lineNumbers.get(unit.line)}:${unit.printGroupId}`;
   };
   const serviceHeader = (unit) => ({
     splitType: deityWise && unit.isDeityBased ? "DEITY" : "GROUP",
