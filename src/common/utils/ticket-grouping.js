@@ -138,6 +138,10 @@ function toTicketLine(unit) {
     // Picture to print under this line - only present when both "print image" switches are on and the
     // record has a picture (see common/utils/ticket-image.js). Absent = the ticket prints as before.
     ...(unit.offeringImageUrl ? { imageUrl: unit.offeringImageUrl } : {}),
+    // Session the line was booked for ("YYYY-MM-DD" + "AM"/"PM"); null when the offering has no session rule,
+    // in which case the printed ticket shows no "Session Date" line.
+    sessionDate: unit.line.sessionDate || null,
+    session: unit.line.session || null,
     // Event lines only — the slot the ticket is for (null for Item/Service lines).
     eventSlot: unit.line.eventSlot
       ? {
